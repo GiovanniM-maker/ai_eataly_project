@@ -25,26 +25,66 @@ import { MODELS, DEFAULT_MODEL } from '../constants/models';
  * Simplified API call - backend handles all Gemini formatting
  */
 const callChatAPI = async (message, model, history = []) => {
+  // Create AbortController for timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
   try {
-    console.log('🔄 Calling /api/chat:', { model, messageLength: message?.length, historyLength: history.length });
+    console.log('🔄 [API] Starting call to /api/chat:', { 
+      model, 
+      messageLength: message?.length || 0, 
+      historyLength: history?.length || 0 
+    });
     
     // Determine API endpoint
     const isDevelopment = import.meta.env.DEV;
     const apiUrl = import.meta.env.VITE_API_URL || (isDevelopment ? 'http://localhost:3000/api/chat' : '/api/chat');
     
-    console.log('📡 Calling API:', apiUrl);
+    console.log('📡 [API] Endpoint:', apiUrl);
+    console.log('📡 [API] Environment:', { 
+      isDev: isDevelopment, 
+      hasCustomUrl: !!import.meta.env.VITE_API_URL 
+    });
 
+    // Prepare request body
+    const requestBody = {
+      message: message || '',
+      model: model || DEFAULT_MODEL,
+      history: history || [],
+    };
+
+    console.log('📤 [API] Request body:', {
+      message: requestBody.message.substring(0, 50) + (requestBody.message.length > 50 ? '...' : ''),
+      model: requestBody.model,
+      historyCount: requestBody.history.length
+    });
+
+    const startTime = Date.now();
     const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        message: message || '',
-        model: model || DEFAULT_MODEL,
-        history: history || [],
-      }),
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
     });
+
+    const duration = Date.now() - startTime;
+    console.log('📥 [API] Response received:', { 
+      status: response.status, 
+      statusText: response.statusText,
+      duration: `${duration}ms`,
+      contentType: response.headers.get('content-type')
+    });
+
+    // Check if response is HTML (indicates rewrite issue)
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+      const htmlPreview = await response.text().then(text => text.substring(0, 200));
+      console.error('❌ [API] Received HTML instead of JSON - rewrite issue detected!');
+      console.error('❌ [API] HTML preview:', htmlPreview);
+      throw new Error('API endpoint returned HTML instead of JSON. Check vercel.json rewrites.');
+    }
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -54,15 +94,35 @@ const callChatAPI = async (message, model, history = []) => {
       } catch {
         errorData = { error: errorText || `HTTP ${response.status}` };
       }
-      console.error('❌ API Error:', response.status, errorData);
+      console.error('❌ [API] Error response:', { 
+        status: response.status, 
+        error: errorData 
+      });
       throw new Error(errorData.error || errorData.message || `API error: ${response.status}`);
     }
 
     const data = await response.json();
-    console.log('✅ API Response received:', { modelUsed: data.modelUsed, fallbackApplied: data.fallbackApplied });
+    console.log('✅ [API] Success:', { 
+      modelUsed: data.modelUsed, 
+      fallbackApplied: data.fallbackApplied,
+      replyLength: data.reply?.length || 0
+    });
+    
+    clearTimeout(timeoutId);
     return data.reply || 'No response generated';
   } catch (error) {
-    console.error('❌ Error calling /api/chat:', error);
+    clearTimeout(timeoutId);
+    
+    if (error.name === 'AbortError') {
+      console.error('❌ [API] Request timeout after 30 seconds');
+      throw new Error('Request timeout: The API did not respond within 30 seconds');
+    }
+    
+    console.error('❌ [API] Error calling /api/chat:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
     throw error;
   }
 };

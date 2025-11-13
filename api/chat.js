@@ -1,10 +1,11 @@
 import { createSign } from 'crypto';
 
-// CORS allowed origins - Update with your actual domains
+// CORS allowed origins - Update with your actual production domain
 const ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:4173',
-  'https://*.vercel.app',
+  // Add your actual Vercel deployment URL here (e.g., 'https://ai-app-vert-chi.vercel.app')
+  // Wildcard patterns are not reliable on Vercel, use explicit URLs
 ];
 
 // Cache for access token
