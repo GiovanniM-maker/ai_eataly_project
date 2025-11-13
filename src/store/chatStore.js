@@ -20,10 +20,23 @@ import {
 import { db, storage } from '../config/firebase';
 import { MODELS, DEFAULT_MODEL } from '../constants/models';
 
-// Convert image URL to base64
+// Convert File to base64
+const fileToBase64 = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
+// Convert image URL to base64 (for images already uploaded to Firebase)
 const imageUrlToBase64 = async (imageUrl) => {
   try {
     const response = await fetch(imageUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.status}`);
+    }
     const blob = await response.blob();
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -32,14 +45,16 @@ const imageUrlToBase64 = async (imageUrl) => {
       reader.readAsDataURL(blob);
     });
   } catch (error) {
-    console.error('Error converting image to base64:', error);
+    console.error('Error converting image URL to base64:', error);
     return null;
   }
 };
 
 // Call Google Gemini API via serverless function
-const callGeminiAPI = async (message, model, images = [], conversationHistory = []) => {
+const callGeminiAPI = async (message, model, imageFiles = [], imageUrls = [], conversationHistory = []) => {
   try {
+    console.log('🔄 Calling Gemini API:', { model, messageLength: message?.length, imageFiles: imageFiles.length, imageUrls: imageUrls.length });
+    
     // Prepara contents con storia conversazione
     const contents = [];
     
@@ -53,14 +68,37 @@ const callGeminiAPI = async (message, model, images = [], conversationHistory = 
     });
 
     // Aggiungi nuovo messaggio utente
-    const userParts = [{ text: message }];
+    const userParts = [{ text: message || '' }];
     
-    // Aggiungi immagini se presenti
-    if (images && images.length > 0) {
-      for (const imageUrl of images) {
+    // Converti File objects a base64
+    if (imageFiles && imageFiles.length > 0) {
+      for (const file of imageFiles) {
+        try {
+          const base64Image = await fileToBase64(file);
+          if (base64Image) {
+            // Estrai MIME type e data
+            const mimeMatch = base64Image.match(/data:([^;]+);base64,(.+)/);
+            if (mimeMatch) {
+              userParts.push({
+                inline_data: {
+                  mime_type: mimeMatch[1],
+                  data: mimeMatch[2]
+                }
+              });
+              console.log('✅ Image file converted to base64:', file.name);
+            }
+          }
+        } catch (error) {
+          console.error('Error converting file to base64:', error);
+        }
+      }
+    }
+    
+    // Converti image URLs a base64 (per immagini già caricate su Firebase)
+    if (imageUrls && imageUrls.length > 0) {
+      for (const imageUrl of imageUrls) {
         const base64Image = await imageUrlToBase64(imageUrl);
         if (base64Image) {
-          // Estrai MIME type e data
           const mimeMatch = base64Image.match(/data:([^;]+);base64,(.+)/);
           if (mimeMatch) {
             userParts.push({
@@ -69,6 +107,7 @@ const callGeminiAPI = async (message, model, images = [], conversationHistory = 
                 data: mimeMatch[2]
               }
             });
+            console.log('✅ Image URL converted to base64:', imageUrl);
           }
         }
       }
@@ -79,8 +118,12 @@ const callGeminiAPI = async (message, model, images = [], conversationHistory = 
       parts: userParts
     });
 
-    // Determina API endpoint (usa /api/generate per Vercel, altrimenti endpoint assoluto)
-    const apiUrl = import.meta.env.VITE_API_URL || '/api/generate';
+    // Determina API endpoint
+    // In produzione su Vercel usa /api/generate, in sviluppo locale potrebbe servire URL completo
+    const isDevelopment = import.meta.env.DEV;
+    const apiUrl = import.meta.env.VITE_API_URL || (isDevelopment ? 'http://localhost:3000/api/generate' : '/api/generate');
+    
+    console.log('📡 Calling API:', apiUrl);
 
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -97,14 +140,22 @@ const callGeminiAPI = async (message, model, images = [], conversationHistory = 
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(errorData.error || `API error: ${response.status}`);
+      const errorText = await response.text();
+      let errorData;
+      try {
+        errorData = JSON.parse(errorText);
+      } catch {
+        errorData = { error: errorText || `HTTP ${response.status}` };
+      }
+      console.error('❌ API Error:', response.status, errorData);
+      throw new Error(errorData.error || errorData.message || `API error: ${response.status}`);
     }
 
     const data = await response.json();
+    console.log('✅ API Response received:', { modelUsed: data.modelUsed, fallbackApplied: data.fallbackApplied });
     return data.reply || 'No response generated';
   } catch (error) {
-    console.error('Error calling Gemini API:', error);
+    console.error('❌ Error calling Gemini API:', error);
     throw error;
   }
 };
@@ -306,10 +357,12 @@ export const useChatStore = create((set, get) => ({
         }
       }
 
-      // Upload images to Firebase Storage if any
+      // Upload images to Firebase Storage if any (for persistence)
       const imageUrls = [];
-      if (images && images.length > 0) {
-        for (const image of images) {
+      const imageFiles = Array.isArray(images) ? images : [];
+      
+      if (imageFiles.length > 0) {
+        for (const image of imageFiles) {
           try {
             const timestamp = Date.now();
             const fileName = `${timestamp}_${image.name || 'image'}`;
@@ -317,10 +370,10 @@ export const useChatStore = create((set, get) => ({
             await uploadBytes(imageRef, image);
             const downloadURL = await getDownloadURL(imageRef);
             imageUrls.push(downloadURL);
-            console.log('Image uploaded:', downloadURL);
+            console.log('✅ Image uploaded to Firebase Storage:', downloadURL);
           } catch (uploadError) {
-            console.error('Error uploading image:', uploadError);
-            throw new Error(`Failed to upload image: ${uploadError.message}`);
+            console.error('⚠️ Error uploading image to Storage (continuing anyway):', uploadError);
+            // Non blocchiamo l'invio del messaggio se l'upload fallisce
           }
         }
       }
@@ -363,10 +416,12 @@ export const useChatStore = create((set, get) => ({
       console.log('✅ User message saved to Firebase:', { activeChatId, messageCount: newMessages.length });
 
       // Get assistant response from Google Gemini
+      // Passa sia i File objects che gli URL (per supportare entrambi i casi)
       const assistantResponse = await callGeminiAPI(
-        content || (imageUrls.length > 0 ? 'Describe this image' : ''),
+        content || (imageFiles.length > 0 ? 'Describe this image' : ''),
         currentModel,
-        imageUrls,
+        imageFiles, // File objects (per conversione diretta)
+        imageUrls,  // URLs (per immagini già caricate)
         currentMessages // Pass conversation history
       );
       
