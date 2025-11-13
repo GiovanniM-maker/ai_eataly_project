@@ -1,10 +1,10 @@
 import { createSign } from 'crypto';
 
-// CORS allowed origins - EXACT MATCH ONLY
+// CORS allowed origins
 const ALLOWED_ORIGINS = [
-  "http://localhost:5173",
-  "http://localhost:4173",
-  "https://ai-eataly-project.vercel.app" // PROD DOMAIN - MUST MATCH EXACTLY
+  'http://localhost:5173',
+  'http://localhost:4173',
+  'https://ai-eataly-project.vercel.app'
 ];
 
 // Cache for access token
@@ -104,39 +104,25 @@ const getAccessToken = async () => {
 
     return cachedAccessToken;
   } catch (error) {
-    console.error('Error getting access token:', error);
+    console.error('[API] Error getting access token:', error);
     throw error;
   }
 };
 
 /**
- * Convert frontend history format to Gemini API format
- */
-const convertHistoryToGeminiFormat = (history = []) => {
-  return history.map(msg => ({
-    role: msg.role === 'user' ? 'user' : 'model',
-    parts: [{ text: msg.content }]
-  }));
-};
-
-/**
  * Call Google Gemini API
  */
-const callGeminiAPI = async (model, message, history = []) => {
+const callGeminiAPI = async (model, message) => {
   const accessToken = await getAccessToken();
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
-  // Convert history to Gemini format
-  const contents = convertHistoryToGeminiFormat(history);
-  
-  // Add current message
-  contents.push({
-    role: 'user',
-    parts: [{ text: message }]
-  });
-
   const requestBody = {
-    contents,
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: message }]
+      }
+    ],
     generationConfig: {
       temperature: 0.7,
       topP: 0.9,
@@ -166,25 +152,13 @@ const callGeminiAPI = async (model, message, history = []) => {
  * Main handler
  */
 export default async function handler(req, res) {
-  // Log incoming request
-  console.log("[API] Incoming request", {
-    method: req.method,
-    origin: req.headers.origin,
-    url: req.url
-  });
-
   // Handle CORS
   const origin = req.headers.origin || req.headers.referer?.split('/').slice(0, 3).join('/');
-  
-  // Check if origin is allowed (exact match only, no wildcards)
   const isAllowed = origin && ALLOWED_ORIGINS.includes(origin);
 
   if (isAllowed) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
-  } else if (origin) {
-    // Log CORS issues for debugging
-    console.warn('⚠️ [CORS] Blocked origin:', origin, 'Allowed origins:', ALLOWED_ORIGINS);
   }
 
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -202,7 +176,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { message, model, history } = req.body;
+    console.log('[API] Incoming request', {
+      method: req.method,
+      origin: req.headers.origin,
+      url: req.url
+    });
+
+    const { message, model } = req.body;
 
     // Validate required fields
     if (!message || typeof message !== 'string') {
@@ -213,59 +193,22 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing or invalid "model" field' });
     }
 
-    // Validate history format if provided
-    if (history && !Array.isArray(history)) {
-      return res.status(400).json({ error: 'Invalid "history" field: must be an array' });
-    }
-
-    // Validate model
-    const validModels = [
-      'gemini-1.5-pro',
-      'gemini-1.5-flash',
-      'gemini-2.0-flash-lite-preview'
-    ];
-
-    if (!validModels.includes(model)) {
-      return res.status(400).json({ 
-        error: `Invalid model. Must be one of: ${validModels.join(', ')}` 
-      });
-    }
-
     // Call Gemini API
-    let result;
-    let modelUsed = model;
-    let fallbackApplied = false;
-
-    try {
-      result = await callGeminiAPI(model, message, history || []);
-      console.log("[API] Gemini response received");
-    } catch (error) {
-      // Fallback to gemini-1.5-flash if model not available
-      if (error.message.includes('404') || error.message.includes('400')) {
-        console.warn(`Model ${model} not available, falling back to gemini-1.5-flash`);
-        modelUsed = 'gemini-1.5-flash';
-        fallbackApplied = true;
-        result = await callGeminiAPI(modelUsed, message, history || []);
-        console.log("[API] Gemini response received (fallback)");
-      } else {
-        throw error;
-      }
-    }
+    console.log('[API] Calling Gemini API:', { model, messageLength: message.length });
+    const result = await callGeminiAPI(model, message);
+    console.log('[API] Gemini response received');
 
     // Extract reply from response
     const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
 
     return res.status(200).json({
       reply,
-      modelUsed,
-      fallbackApplied,
     });
   } catch (error) {
-    console.error("[API] ERROR:", error);
+    console.error('[API] ERROR:', error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message,
     });
   }
 }
-
