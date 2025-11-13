@@ -4,23 +4,30 @@ import { getStorage } from 'firebase/storage';
 
 // Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBfW-DJsytPbGbIutbYfd9kXO9y7jCqCEg",
-  authDomain: "eataly-creative-ai-suite.firebaseapp.com",
-  projectId: "eataly-creative-ai-suite",
-  storageBucket: "eataly-creative-ai-suite.firebasestorage.app",
-  messagingSenderId: "392418318075",
-  appId: "1:392418318075:web:3c1aa88df71dca64da425e",
-  measurementId: "G-GSE68WH3P9"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBfW-DJsytPbGbIutbYfd9kXO9y7jCqCEg",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "eataly-creative-ai-suite.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "eataly-creative-ai-suite",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "eataly-creative-ai-suite.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "392418318075",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:392418318075:web:3c1aa88df71dca64da425e",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-GSE68WH3P9"
 };
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
+let app;
+let db;
+let storage;
 
-// Initialize Firestore
-export const db = getFirestore(app);
+try {
+  app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  storage = getStorage(app);
+  console.log('✅ Firebase initialized successfully');
+} catch (error) {
+  console.error('❌ Error initializing Firebase:', error);
+  throw error;
+}
 
-// Initialize Storage
-export const storage = getStorage(app);
-
+export { db, storage };
 export default app;
 
