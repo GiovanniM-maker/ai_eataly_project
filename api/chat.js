@@ -169,16 +169,16 @@ const callGeminiAPI = async (model, message, history = []) => {
 export default async function handler(req, res) {
   // Handle CORS
   const origin = req.headers.origin || req.headers.referer?.split('/').slice(0, 3).join('/');
-  const isAllowed = ALLOWED_ORIGINS.some(allowed => {
-    if (allowed.includes('*')) {
-      return origin?.includes(allowed.replace('*.', ''));
-    }
-    return origin === allowed;
-  });
+  
+  // Check if origin is allowed (exact match only, no wildcards)
+  const isAllowed = origin && ALLOWED_ORIGINS.includes(origin);
 
   if (isAllowed) {
     res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Vary', 'Origin');
+  } else if (origin) {
+    // Log CORS issues for debugging
+    console.warn('⚠️ [CORS] Blocked origin:', origin, 'Allowed origins:', ALLOWED_ORIGINS);
   }
 
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
