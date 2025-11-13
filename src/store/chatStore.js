@@ -40,12 +40,8 @@ const callChatAPI = async (message, model, history = []) => {
     const isDevelopment = import.meta.env.DEV;
     const apiUrl = import.meta.env.VITE_API_URL || (isDevelopment ? 'http://localhost:3000/api/chat' : '/api/chat');
     
-    console.log('📡 [API] Endpoint:', apiUrl);
-    console.log('📡 [API] Environment:', { 
-      isDev: isDevelopment, 
-      hasCustomUrl: !!import.meta.env.VITE_API_URL 
-    });
-
+    console.log("[API] Calling:", apiUrl);
+    
     // Prepare request body
     const requestBody = {
       message: message || '',
@@ -53,11 +49,7 @@ const callChatAPI = async (message, model, history = []) => {
       history: history || [],
     };
 
-    console.log('📤 [API] Request body:', {
-      message: requestBody.message.substring(0, 50) + (requestBody.message.length > 50 ? '...' : ''),
-      model: requestBody.model,
-      historyCount: requestBody.history.length
-    });
+    console.log("[API] Request body:", { message, model });
 
     const startTime = Date.now();
     const response = await fetch(apiUrl, {
@@ -78,12 +70,12 @@ const callChatAPI = async (message, model, history = []) => {
     });
 
     // Check if response is HTML (indicates rewrite issue)
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('text/html')) {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/html")) {
       const htmlPreview = await response.text().then(text => text.substring(0, 200));
       console.error('❌ [API] Received HTML instead of JSON - rewrite issue detected!');
       console.error('❌ [API] HTML preview:', htmlPreview);
-      throw new Error('API endpoint returned HTML instead of JSON. Check vercel.json rewrites.');
+      throw new Error("HTML response received — /api/chat was not reached. Check rewrites or CORS.");
     }
 
     if (!response.ok) {

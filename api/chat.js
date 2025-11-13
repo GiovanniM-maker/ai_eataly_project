@@ -1,11 +1,10 @@
 import { createSign } from 'crypto';
 
-// CORS allowed origins - Update with your actual production domain
+// CORS allowed origins - EXACT MATCH ONLY
 const ALLOWED_ORIGINS = [
-  'http://localhost:5173',
-  'http://localhost:4173',
-  // Add your actual Vercel deployment URL here (e.g., 'https://ai-app-vert-chi.vercel.app')
-  // Wildcard patterns are not reliable on Vercel, use explicit URLs
+  "http://localhost:5173",
+  "http://localhost:4173",
+  "https://ai-eataly-project.vercel.app" // PROD DOMAIN - MUST MATCH EXACTLY
 ];
 
 // Cache for access token
@@ -167,6 +166,13 @@ const callGeminiAPI = async (model, message, history = []) => {
  * Main handler
  */
 export default async function handler(req, res) {
+  // Log incoming request
+  console.log("[API] Incoming request", {
+    method: req.method,
+    origin: req.headers.origin,
+    url: req.url
+  });
+
   // Handle CORS
   const origin = req.headers.origin || req.headers.referer?.split('/').slice(0, 3).join('/');
   
@@ -232,6 +238,7 @@ export default async function handler(req, res) {
 
     try {
       result = await callGeminiAPI(model, message, history || []);
+      console.log("[API] Gemini response received");
     } catch (error) {
       // Fallback to gemini-1.5-flash if model not available
       if (error.message.includes('404') || error.message.includes('400')) {
@@ -239,6 +246,7 @@ export default async function handler(req, res) {
         modelUsed = 'gemini-1.5-flash';
         fallbackApplied = true;
         result = await callGeminiAPI(modelUsed, message, history || []);
+        console.log("[API] Gemini response received (fallback)");
       } else {
         throw error;
       }
@@ -253,7 +261,7 @@ export default async function handler(req, res) {
       fallbackApplied,
     });
   } catch (error) {
-    console.error('Error in /api/chat:', error);
+    console.error("[API] ERROR:", error);
     return res.status(500).json({
       error: 'Internal server error',
       message: error.message,
