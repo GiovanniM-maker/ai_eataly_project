@@ -1,6 +1,6 @@
 # AI Eataly Chat
 
-A ChatGPT-like web application built with React, Vite, and TailwindCSS.
+A ChatGPT-like web application built with React, Vite, TailwindCSS, and Firebase Firestore.
 
 ## Features
 
@@ -10,6 +10,8 @@ A ChatGPT-like web application built with React, Vite, and TailwindCSS.
 - 📱 Responsive sidebar with conversation history
 - ⚡ Fast and smooth transitions
 - 🎯 State management with Zustand
+- 🔥 Firebase Firestore integration for persistent chat storage
+- ☁️ Real-time synchronization across devices
 
 ## Getting Started
 
@@ -18,6 +20,18 @@ A ChatGPT-like web application built with React, Vite, and TailwindCSS.
 ```bash
 npm install
 ```
+
+### Firebase Setup
+
+**⚠️ Important:** Before running the app, you need to configure Firebase Firestore.
+
+1. The Firebase configuration is already set up in `src/config/firebase.js`
+2. Go to [Firebase Console](https://console.firebase.google.com/)
+3. Select project: `eataly-creative-ai-suite`
+4. Enable Firestore Database
+5. Configure Firestore security rules (see `FIREBASE_SETUP.md` for details)
+
+For detailed Firebase setup instructions, see [FIREBASE_SETUP.md](./FIREBASE_SETUP.md)
 
 ### Development
 
@@ -43,8 +57,10 @@ src/
     MessageBubble.jsx    # Individual message component
     ModelSelector.jsx    # Model dropdown selector
     ChatInput.jsx        # Message input with auto-resize
+  config/
+    firebase.js          # Firebase configuration and initialization
   store/
-    chatStore.js        # Zustand store for state management
+    chatStore.js        # Zustand store with Firebase integration
   App.jsx               # Main app component
   main.jsx              # Entry point
   index.css             # Global styles with Tailwind
@@ -56,4 +72,23 @@ src/
 - Vite
 - TailwindCSS
 - Zustand (state management)
+- Firebase Firestore (database)
+- Firebase SDK v9+
+
+## Live Demo
+
+🌐 **Live Site:** [https://giovannim-maker.github.io/ai-eataly-chat/](https://giovannim-maker.github.io/ai-eataly-chat/)
+
+## Firebase Data Structure
+
+The app stores chats in Firestore with the following structure:
+
+```javascript
+chats/{chatId}
+  - title: string
+  - messages: Array<{role: string, content: string, timestamp: string}>
+  - model: string
+  - createdAt: Timestamp
+  - updatedAt: Timestamp
+```
 
