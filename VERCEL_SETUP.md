@@ -79,7 +79,7 @@ curl -X POST https://your-app.vercel.app/api/generate \
 
 ### Controlla Logs
 
-- Vai su **Deployments** → Seleziona un deployment → **Functions** → `api/generate`
+- Vai su **Deployments** → Seleziona un deployment → **Functions** → `api/chat`
 - Controlla i logs per eventuali errori
 
 ## 🐛 Troubleshooting
