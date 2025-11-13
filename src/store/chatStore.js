@@ -199,8 +199,19 @@ export const useChatStore = create((set, get) => ({
       }
       activeChatId = newChatId;
       set({ activeChatId: newChatId });
-      // Wait a bit for the chat to be created and appear in the listener
-      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Add the new chat to local state immediately
+      const newChat = {
+        id: newChatId,
+        title: 'New Chat',
+        messages: [],
+        model: currentModel,
+        createdAt: new Date()
+      };
+      set({ chats: [newChat, ...chats] });
+      
+      // Wait a bit for the chat to be created in Firestore
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
 
     try {
@@ -220,6 +231,8 @@ export const useChatStore = create((set, get) => ({
               messages: docData.messages || [],
               title: docData.title || 'New Chat'
             };
+            // Update local state with fetched chat
+            set({ chats: [currentChat, ...chats.filter(c => c.id !== activeChatId)] });
           } else {
             currentChat = { id: activeChatId, messages: [], title: 'New Chat' };
           }
@@ -267,7 +280,16 @@ export const useChatStore = create((set, get) => ({
         ? (content?.slice(0, 50) || 'New Chat')
         : (currentChat.title || 'New Chat');
 
-      // Update chat with user message immediately in Firestore
+      // Update local state optimistically (show message immediately)
+      const { chats: currentChats } = get();
+      const updatedChats = currentChats.map(chat => 
+        chat.id === activeChatId 
+          ? { ...chat, messages: newMessages, title: newTitle }
+          : chat
+      );
+      set({ chats: updatedChats });
+
+      // Update chat with user message in Firestore
       await updateDoc(chatRef, {
         messages: newMessages,
         title: newTitle,
@@ -288,7 +310,16 @@ export const useChatStore = create((set, get) => ({
 
       const finalMessages = [...newMessages, assistantMessage];
 
-      // Update chat with assistant response
+      // Update local state optimistically (show assistant message immediately)
+      const { chats: currentChatsForAssistant } = get();
+      const finalUpdatedChats = currentChatsForAssistant.map(chat => 
+        chat.id === activeChatId 
+          ? { ...chat, messages: finalMessages }
+          : chat
+      );
+      set({ chats: finalUpdatedChats });
+
+      // Update chat with assistant response in Firestore
       await updateDoc(chatRef, {
         messages: finalMessages,
         updatedAt: serverTimestamp()
