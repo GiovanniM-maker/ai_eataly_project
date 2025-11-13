@@ -11,6 +11,7 @@ const ChatInput = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [selectedImages, setSelectedImages] = useState([]);
   const [imagePreviews, setImagePreviews] = useState([]);
+  const [error, setError] = useState(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const { sendMessage } = useChatStore();
@@ -64,12 +65,16 @@ const ChatInput = () => {
     setIsLoading(true);
 
     try {
+      setError(null);
       await sendMessage(message, imagesToSend);
     } catch (error) {
       console.error('Error sending message:', error);
+      setError(error.message || 'Failed to send message. Please try again.');
       // Restore input and images on error
       setInput(message);
       setSelectedImages(imagesToSend);
+      // Auto-hide error after 5 seconds
+      setTimeout(() => setError(null), 5000);
     } finally {
       setIsLoading(false);
       // Reset textarea height
@@ -89,6 +94,24 @@ const ChatInput = () => {
   return (
     <div className="border-t border-gray-700 bg-gray-900 p-4">
       <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
+        {/* Error Message */}
+        {error && (
+          <div className="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-200 text-sm">
+            <div className="flex items-center gap-2">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>{error}</span>
+              <button
+                type="button"
+                onClick={() => setError(null)}
+                className="ml-auto text-red-300 hover:text-red-100"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
         {/* Image Previews */}
         {imagePreviews.length > 0 && (
           <div className="mb-3 flex gap-2 flex-wrap">
