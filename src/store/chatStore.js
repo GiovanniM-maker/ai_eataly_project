@@ -4,6 +4,7 @@ import {
   doc,
   addDoc,
   updateDoc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -191,7 +192,7 @@ export const useChatStore = create((set, get) => ({
       const newChatId = await get().createNewChat();
       if (!newChatId) {
         console.error('Failed to create new chat');
-        return;
+        throw new Error('Failed to create new chat');
       }
       activeChatId = newChatId;
       set({ activeChatId: newChatId });
@@ -199,13 +200,29 @@ export const useChatStore = create((set, get) => ({
 
     try {
       const chatRef = doc(db, 'chats', activeChatId);
+      
+      // Get current chat data from Firestore to ensure we have the latest
       const { chats } = get();
       let currentChat = chats.find(chat => chat.id === activeChatId);
       
-      // If chat not found in local state, use empty messages
-      // The real-time listener will update it
+      // If chat not found in local state, fetch it from Firestore
       if (!currentChat) {
-        currentChat = { messages: [] };
+        try {
+          const chatDoc = await getDoc(chatRef);
+          if (chatDoc.exists()) {
+            const docData = chatDoc.data();
+            currentChat = {
+              id: activeChatId,
+              messages: docData.messages || [],
+              title: docData.title || 'New Chat'
+            };
+          } else {
+            currentChat = { messages: [], title: 'New Chat' };
+          }
+        } catch (fetchError) {
+          console.warn('Could not fetch chat from Firestore, using empty:', fetchError);
+          currentChat = { messages: [], title: 'New Chat' };
+        }
       }
 
       // Upload images to Firebase Storage if any
@@ -213,12 +230,15 @@ export const useChatStore = create((set, get) => ({
       if (images && images.length > 0) {
         for (const image of images) {
           try {
-            const imageRef = ref(storage, `chats/${activeChatId}/${Date.now()}_${image.name}`);
+            const timestamp = Date.now();
+            const fileName = `${timestamp}_${image.name || 'image'}`;
+            const imageRef = ref(storage, `chats/${activeChatId}/${fileName}`);
             await uploadBytes(imageRef, image);
             const downloadURL = await getDownloadURL(imageRef);
             imageUrls.push(downloadURL);
           } catch (uploadError) {
             console.error('Error uploading image:', uploadError);
+            throw new Error(`Failed to upload image: ${uploadError.message}`);
           }
         }
       }
@@ -227,30 +247,32 @@ export const useChatStore = create((set, get) => ({
       const userMessage = {
         role: 'user',
         content: content || '',
-        images: imageUrls.length > 0 ? imageUrls : undefined,
+        ...(imageUrls.length > 0 && { images: imageUrls }),
         timestamp: new Date().toISOString()
       };
 
-      // Prepare new messages array
-      const newMessages = [
-        ...(currentChat?.messages || []),
-        userMessage
-      ];
+      // Get current messages array
+      const currentMessages = Array.isArray(currentChat.messages) ? currentChat.messages : [];
+      
+      // Prepare new messages array with user message
+      const newMessages = [...currentMessages, userMessage];
 
       // Update title if it's the first user message
-      const newTitle = (currentChat?.messages?.length || 0) === 0 
+      const newTitle = currentMessages.length === 0 
         ? (content?.slice(0, 50) || 'New Chat')
-        : (currentChat?.title || 'New Chat');
+        : (currentChat.title || 'New Chat');
 
-      // Update chat with user message
+      // Update chat with user message immediately
       await updateDoc(chatRef, {
         messages: newMessages,
         title: newTitle,
         updatedAt: serverTimestamp()
       });
 
+      console.log('User message saved to Firebase');
+
       // Get assistant response
-      const assistantResponse = await fakeApiCall(content || 'Image received', currentModel);
+      const assistantResponse = await fakeApiCall(content || (imageUrls.length > 0 ? 'Image received' : ''), currentModel);
       
       // Add assistant message
       const assistantMessage = {
@@ -259,15 +281,15 @@ export const useChatStore = create((set, get) => ({
         timestamp: new Date().toISOString()
       };
 
-      const finalMessages = [
-        ...newMessages,
-        assistantMessage
-      ];
+      const finalMessages = [...newMessages, assistantMessage];
 
+      // Update chat with assistant response
       await updateDoc(chatRef, {
         messages: finalMessages,
         updatedAt: serverTimestamp()
       });
+
+      console.log('Assistant message saved to Firebase');
     } catch (error) {
       console.error('Error sending message:', error);
       throw error; // Re-throw so UI can handle it
