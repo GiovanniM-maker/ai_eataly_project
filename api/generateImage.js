@@ -104,7 +104,8 @@ const callImagenAPI = async (prompt) => {
     throw new Error('No image data found in Imagen API response');
   }
   
-  console.log("[API:IMAGEN] Image extracted successfully, length:", imageBase64.length);
+  console.log("[API:IMAGEN] Image extracted successfully");
+  console.log("[API:IMAGEN] Final base64 length:", imageBase64.length, "characters");
   console.log("[API:IMAGEN] ========================================");
   
   return imageBase64;

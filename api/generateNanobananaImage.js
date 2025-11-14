@@ -132,10 +132,11 @@ const callNanobananaAPI = async (prompt) => {
     throw new Error('No image data found in Nanobanana API response');
   }
 
-  console.log("[API:NANOBANANA] Image extracted successfully, length:", imageBase64.length);
-  console.log("[API:NANOBANANA] ========================================");
+    console.log("[API:NANOBANANA] Image extracted successfully");
+    console.log("[API:NANOBANANA] Final base64 length:", imageBase64.length, "characters");
+    console.log("[API:NANOBANANA] ========================================");
 
-  return imageBase64;
+    return imageBase64;
 };
 
 /**

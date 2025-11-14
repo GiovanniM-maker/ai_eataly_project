@@ -158,40 +158,15 @@ const ChatUI = () => {
                   {message.content && (
                     <p className="whitespace-pre-wrap mb-2">{message.content}</p>
                   )}
-                  {/* Image messages: type === "image" with url */}
-                  {message.type === 'image' && message.url && (
+                  {/* Image messages: type === "image" with base64 */}
+                  {message.type === 'image' && message.base64 && (
                     <img
-                      src={message.url}
+                      src={message.base64}
                       alt={message.role === 'user' ? 'Uploaded image' : 'Generated image'}
                       className="max-w-full rounded-lg mt-2"
                       style={{ maxWidth: '100%', height: 'auto' }}
-                    />
-                  )}
-                  {/* Legacy: Image from URL (for backward compatibility) */}
-                  {!message.type && message.imageUrl && (
-                    <img
-                      src={message.imageUrl}
-                      alt={message.role === 'user' ? 'Uploaded image' : 'Generated image'}
-                      className="max-w-full rounded-lg mt-2"
-                      style={{ maxWidth: '100%', height: 'auto' }}
-                    />
-                  )}
-                  {/* Image from base64 (temporary, during upload) */}
-                  {message.imageBase64 && (
-                    <img
-                      src={`data:image/png;base64,${message.imageBase64}`}
-                      alt="Generated image"
-                      className="max-w-full rounded-lg mt-2"
-                      style={{ maxWidth: '100%', height: 'auto' }}
-                    />
-                  )}
-                  {/* Image from local preview (temporary, user upload) */}
-                  {message.localPreviewUrl && (
-                    <img
-                      src={message.localPreviewUrl}
-                      alt="Uploaded image"
-                      className="max-w-full rounded-lg mt-2"
-                      style={{ maxWidth: '100%', height: 'auto' }}
+                      onLoad={() => console.log('[UI] Image rendered successfully from base64')}
+                      onError={(e) => console.error('[UI] Error rendering image from base64:', e)}
                     />
                   )}
                 </div>

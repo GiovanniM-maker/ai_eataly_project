@@ -12,7 +12,6 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db, app } from '../config/firebase';
-import { processImage } from '../utils/imageProcessor';
 import { DEFAULT_MODEL, isImagenModel } from '../constants/models';
 import { resolveModelConfig } from '../lib/modelRouter';
 
@@ -90,13 +89,14 @@ export const useChatStore = create((set, get) => ({
           loadedMessages.push({
             id: doc.id,
             type: 'image',
-            url: data.url,
+            base64: data.base64 || null, // Load base64 from Firestore
             role: data.sender === 'user' ? 'user' : 'assistant',
             sender: data.sender,
             messageType: 'image',
             timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
             model: data.model || DEFAULT_MODEL
           });
+          console.log('[Store] Loaded image message from Firestore, base64 length:', data.base64 ? data.base64.length : 0);
         } else if (data.type === 'vision') {
           loadedMessages.push({
             id: doc.id,
@@ -181,13 +181,14 @@ export const useChatStore = create((set, get) => ({
                 newMessage = {
                   id: change.doc.id,
                   type: 'image',
-                  url: data.url,
+                  base64: data.base64 || null, // Load base64 from Firestore
                   role: data.sender === 'user' ? 'user' : 'assistant',
                   sender: data.sender,
                   messageType: 'image',
                   timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
                   model: data.model || DEFAULT_MODEL
                 };
+                console.log('[Store] Realtime update: image message, base64 length:', data.base64 ? data.base64.length : 0);
               } else if (data.type === 'vision') {
                 newMessage = {
                   id: change.doc.id,
@@ -252,51 +253,6 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  /**
-   * Upload image file to PostImages.org via /api/uploadImage
-   * Uses multipart/form-data (NO API KEY REQUIRED)
-   */
-  uploadImageToPostImages: async (file) => {
-    try {
-      const apiUrl = import.meta.env.VITE_API_URL || '/api/uploadImage';
-      
-      console.log('[Store] Uploading image to PostImages.org...', {
-        name: file.name,
-        size: `${(file.size / 1024).toFixed(2)} KB`,
-        type: file.type
-      });
-
-      // Create FormData for multipart/form-data
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        body: formData,
-        // Don't set Content-Type header - browser will set it with boundary
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorData;
-        try {
-          errorData = JSON.parse(errorText);
-        } catch {
-          errorData = { error: errorText || `HTTP ${response.status}` };
-        }
-        const errorMessage = errorData.error || errorData.message || `Upload error: ${response.status}`;
-        console.error('[Store] Upload failed:', errorMessage);
-        throw new Error(errorMessage || 'Impossibile caricare l\'immagine');
-      }
-
-      const data = await response.json();
-      console.log('[Store] Image uploaded to PostImages.org, URL:', data.url);
-      return data.url;
-    } catch (error) {
-      console.error('[Store] Error uploading image to PostImages.org:', error);
-      throw new Error(error.message || 'Impossibile caricare l\'immagine');
-    }
-  },
 
   /**
    * Convert File to base64 (legacy, use processImage instead)
@@ -312,9 +268,9 @@ export const useChatStore = create((set, get) => ({
 
   /**
    * Save message to Firestore
-   * Supports multiple message types: text, image, vision, audio
+   * Supports multiple message types: text, image
    */
-  saveMessageToFirestore: async (role, text, model = DEFAULT_MODEL, imageUrl = null, messageType = null, audioUrl = null) => {
+  saveMessageToFirestore: async (role, text, model = DEFAULT_MODEL, imageBase64 = null, messageType = null) => {
     const { sessionId } = get();
     
     try {
@@ -322,7 +278,7 @@ export const useChatStore = create((set, get) => ({
       
       // Determine message type
       let finalType = messageType;
-      if (!finalType && imageUrl) {
+      if (!finalType && imageBase64) {
         finalType = 'image';
       } else if (!finalType) {
         finalType = 'text';
@@ -337,22 +293,22 @@ export const useChatStore = create((set, get) => ({
       
       if (finalType === 'image') {
         messageData.type = 'image';
-        messageData.url = imageUrl || null;
-      } else if (finalType === 'vision') {
-        messageData.type = 'vision';
-        messageData.analysis = text || null;
-      } else if (finalType === 'audio') {
-        messageData.type = 'audio';
-        messageData.transcript = text || null;
-        messageData.audioUrl = audioUrl || null;
+        // Store base64 as data URL: "data:image/png;base64,..."
+        messageData.base64 = imageBase64 || null;
+        console.log('[Store] Saving image message to Firestore with base64, length:', imageBase64 ? imageBase64.length : 0);
       } else {
-        // Text message (legacy structure for backward compatibility)
+        // Text message
         messageData.role = role;
         messageData.text = text || null;
       }
 
       const docRef = await addDoc(messagesRef, messageData);
-      console.log('[Store] Message saved to Firestore:', docRef.id, 'type:', finalType);
+      console.log('[Store] Message saved to Firestore successfully');
+      console.log('[Store] Document ID:', docRef.id);
+      console.log('[Store] Message type:', finalType);
+      if (finalType === 'image') {
+        console.log('[Store] Base64 length saved:', messageData.base64 ? messageData.base64.length : 0);
+      }
       return docRef.id;
     } catch (error) {
       console.error('[Store] Error saving message to Firestore:', error);
@@ -725,7 +681,7 @@ export const useChatStore = create((set, get) => ({
       try {
         await get().saveMessageToFirestore('user', message, selectedModel, null, config.type);
       } catch (firestoreError) {
-        console.warn('[Store] Firestore save failed, continuing with API call:', firestoreError);
+        console.warn('[Store] Firestore save failed for user message, continuing with API call:', firestoreError);
       }
 
       // Route to appropriate handler based on model provider
@@ -788,6 +744,7 @@ export const useChatStore = create((set, get) => ({
         // Save assistant message to Firestore
         try {
           await get().saveMessageToFirestore('assistant', data.reply || 'No response generated', selectedModel, null, 'text');
+          console.log('[Store] Text message saved to Firestore successfully');
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed for assistant message:', firestoreError);
         }
