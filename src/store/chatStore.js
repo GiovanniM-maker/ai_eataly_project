@@ -454,26 +454,24 @@ export const useChatStore = create((set, get) => ({
     try {
       const apiUrl = import.meta.env.VITE_API_URL || config.endpoint;
       
-      // Get provider from config (imagen or gemini)
-      const provider = config.provider || (modelToUse.startsWith('imagen-') ? 'imagen' : 'gemini');
-      
       console.log('[Store] ========================================');
       console.log('[Store] IMAGE GENERATION REQUEST');
       console.log('[Store] Model:', modelToUse);
-      console.log('[Store] Provider:', provider);
+      console.log('[Store] Google Model:', config.googleModel);
+      console.log('[Store] Provider:', config.provider);
       console.log('[Store] Endpoint:', apiUrl);
       console.log('[Store] Prompt:', prompt);
       console.log('[Store] Model Config:', config);
 
+      // Pass ONLY model and prompt (backend determines provider from model)
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: prompt,
           model: config.googleModel,
-          provider: provider
+          prompt: prompt
         }),
       });
 
@@ -502,6 +500,9 @@ export const useChatStore = create((set, get) => ({
 
       // Create data URL for immediate display
       const imageDataUrl = `data:image/png;base64,${imageBase64}`;
+      
+      // Extract text if present (multimodal models)
+      const textContent = data.text || null;
 
       // Add assistant message with base64 image (temporary)
       const assistantMessage = {
@@ -509,7 +510,7 @@ export const useChatStore = create((set, get) => ({
         type: 'image',
         role: 'assistant',
         sender: 'assistant',
-        content: '',
+        content: textContent || '', // Text from multimodal if present
         model: modelToUse,
         imageBase64: imageBase64, // Temporary, will be replaced with URL
         imageUrl: imageDataUrl, // Data URL for immediate display
@@ -517,6 +518,9 @@ export const useChatStore = create((set, get) => ({
       };
       
       console.log('[Store] Image extracted, length:', imageBase64.length);
+      if (textContent) {
+        console.log('[Store] Text extracted:', textContent.substring(0, 100));
+      }
 
       set(state => ({
         messages: [...state.messages, assistantMessage]

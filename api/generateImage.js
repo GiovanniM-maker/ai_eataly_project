@@ -111,8 +111,11 @@ const getAccessToken = async () => {
 
 /**
  * Call Google Gemini/Imagen API to generate image
- * Imagen: uses generateImage endpoint
- * Gemini Image: uses generateContent endpoint with responseMimeType
+ * 
+ * Provider routing:
+ * - gemini-image: generateContent with responseModalities: ["IMAGE"]
+ * - gemini-multimodal: generateContent with responseModalities: ["TEXT","IMAGE"]
+ * - imagen: generateImage with prompt object
  */
 const callGeminiImageAPI = async (prompt, model, provider) => {
   const accessToken = await getAccessToken();
@@ -128,17 +131,17 @@ const callGeminiImageAPI = async (prompt, model, provider) => {
   console.log("[API] Prompt:", prompt);
   
   if (provider === 'imagen') {
-    // Imagen models use generateImage endpoint
+    // Imagen: use generateImage endpoint with prompt object
     endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateImage`;
     requestBody = {
-      prompt: prompt,
-      sampleCount: 1
+      prompt: { text: prompt },
+      imageGenerationConfig: { sampleCount: 1 }
     };
     console.log("[API] Using Imagen provider");
     console.log("[API] Endpoint:", endpoint);
-    console.log("[API] Payload format: { prompt, sampleCount }");
-  } else {
-    // Gemini Image models use generateContent endpoint
+    console.log("[API] Payload format: { prompt: { text }, imageGenerationConfig: { sampleCount } }");
+  } else if (provider === 'gemini-image') {
+    // Gemini Image: use generateContent with responseModalities: ["IMAGE"]
     endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent`;
     requestBody = {
       contents: [
@@ -148,12 +151,37 @@ const callGeminiImageAPI = async (prompt, model, provider) => {
         }
       ],
       generationConfig: {
-        responseMimeType: "image/png"
+        responseModalities: ["IMAGE"],
+        temperature: 1,
+        topP: 0.95,
+        maxOutputTokens: 32768
       }
     };
     console.log("[API] Using Gemini Image provider");
     console.log("[API] Endpoint:", endpoint);
-    console.log("[API] Payload format: { contents, generationConfig: { responseMimeType: 'image/png' } }");
+    console.log("[API] Payload format: { contents, generationConfig: { responseModalities: ['IMAGE'], ... } }");
+  } else if (provider === 'gemini-multimodal') {
+    // Gemini Multimodal: use generateContent with responseModalities: ["TEXT","IMAGE"]
+    endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent`;
+    requestBody = {
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: prompt }]
+        }
+      ],
+      generationConfig: {
+        responseModalities: ["TEXT", "IMAGE"],
+        temperature: 1,
+        topP: 0.95,
+        maxOutputTokens: 32768
+      }
+    };
+    console.log("[API] Using Gemini Multimodal provider");
+    console.log("[API] Endpoint:", endpoint);
+    console.log("[API] Payload format: { contents, generationConfig: { responseModalities: ['TEXT','IMAGE'], ... } }");
+  } else {
+    throw new Error(`Unknown provider: ${provider}`);
   }
 
   console.log("[API] Request Body:", JSON.stringify(requestBody, null, 2));
@@ -196,26 +224,54 @@ const callGeminiImageAPI = async (prompt, model, provider) => {
   
   // Extract base64 image from response based on provider
   let imageBase64 = null;
+  let textContent = null;
   
   if (provider === 'imagen') {
-    // Imagen returns: { images: [{ base64: "..." }] }
-    if (data.images && data.images[0] && data.images[0].base64) {
-      imageBase64 = data.images[0].base64;
-      console.log("[API] Extracted image from Imagen response: images[0].base64");
-    } else if (data.generatedImages && data.generatedImages[0]) {
-      // Fallback format
-      imageBase64 = data.generatedImages[0].imageBase64 || data.generatedImages[0].image;
-      console.log("[API] Extracted image from Imagen response: generatedImages[0]");
+    // Imagen returns: { images: [{ imageBytes: "base64..." }] }
+    if (data.images && data.images[0] && data.images[0].imageBytes) {
+      imageBase64 = data.images[0].imageBytes;
+      console.log("[API] Extracted image from Imagen response: images[0].imageBytes");
     } else {
       console.error("[API] Imagen response structure:", JSON.stringify(data, null, 2));
+      throw new Error('Imagen response missing images[0].imageBytes');
     }
-  } else {
+  } else if (provider === 'gemini-image') {
     // Gemini Image returns: { candidates: [{ content: { parts: [{ inlineData: { data: "..." } }] } }] }
-    if (data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
-      imageBase64 = data.candidates[0].content.parts[0].inlineData.data;
-      console.log("[API] Extracted image from Gemini response: candidates[0].content.parts[0].inlineData.data");
+    const candidate = data.candidates?.[0];
+    if (candidate?.content?.parts) {
+      const imagePart = candidate.content.parts.find(p => p.inlineData);
+      if (imagePart?.inlineData?.data) {
+        imageBase64 = imagePart.inlineData.data;
+        console.log("[API] Extracted image from Gemini Image response: candidates[0].content.parts[inlineData].inlineData.data");
+      } else {
+        console.error("[API] Gemini Image response structure:", JSON.stringify(data, null, 2));
+        throw new Error('Gemini Image response missing inlineData');
+      }
     } else {
-      console.error("[API] Gemini response structure:", JSON.stringify(data, null, 2));
+      console.error("[API] Gemini Image response structure:", JSON.stringify(data, null, 2));
+      throw new Error('Gemini Image response missing candidates[0].content.parts');
+    }
+  } else if (provider === 'gemini-multimodal') {
+    // Gemini Multimodal returns: { candidates: [{ content: { parts: [{ text }, { inlineData }] } }] }
+    const candidate = data.candidates?.[0];
+    if (candidate?.content?.parts) {
+      // Extract text
+      const textPart = candidate.content.parts.find(p => p.text);
+      if (textPart?.text) {
+        textContent = textPart.text;
+        console.log("[API] Extracted text from Gemini Multimodal response:", textContent.substring(0, 100));
+      }
+      // Extract image
+      const imagePart = candidate.content.parts.find(p => p.inlineData);
+      if (imagePart?.inlineData?.data) {
+        imageBase64 = imagePart.inlineData.data;
+        console.log("[API] Extracted image from Gemini Multimodal response: candidates[0].content.parts[inlineData].inlineData.data");
+      } else {
+        console.error("[API] Gemini Multimodal response missing image part");
+      }
+    } else {
+      console.error("[API] Gemini Multimodal response structure:", JSON.stringify(data, null, 2));
+      throw new Error('Gemini Multimodal response missing candidates[0].content.parts');
     }
   }
   
@@ -224,9 +280,12 @@ const callGeminiImageAPI = async (prompt, model, provider) => {
   }
   
   console.log("[API] Image extracted successfully, length:", imageBase64.length);
+  if (textContent) {
+    console.log("[API] Text extracted:", textContent.substring(0, 100));
+  }
   console.log("[API] ========================================");
   
-  return imageBase64;
+  return { imageBase64, textContent };
 };
 
 /**
@@ -270,40 +329,43 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing or invalid "prompt" field' });
     }
 
-    // Validate that model is an image model
+    // Validate that model is an image model (only 3 supported)
     const imageModels = [
-      'imagen-3',
-      'imagen-3-fast',
-      'imagen-3-ultra',
-      'imagen-4',
-      'imagen-4-ultra',
-      'imagen-4-fast',
       'gemini-2.5-flash-image',
-      'gemini-1.5-pro-image'
+      'gemini-2.5-flash-image-multimodal',
+      'imagen-4'
     ];
     
     const modelToUse = model || "gemini-2.5-flash-image";
     
     if (!imageModels.includes(modelToUse.toLowerCase())) {
       return res.status(400).json({ 
-        error: `Wrong endpoint: model "${modelToUse}" is not an image model. Use /api/chat, /api/generateVision, or /api/generateAudio instead.` 
+        error: `Wrong endpoint: model "${modelToUse}" is not a supported image model. Supported models: ${imageModels.join(', ')}` 
       });
     }
 
-    // Determine provider (imagen vs gemini) for endpoint and payload format
-    const finalProvider = provider || (modelToUse.startsWith('imagen-') ? 'imagen' : 'gemini');
+    // Determine provider based on model
+    let finalProvider;
+    if (modelToUse === 'imagen-4') {
+      finalProvider = 'imagen';
+    } else if (modelToUse === 'gemini-2.5-flash-image-multimodal') {
+      finalProvider = 'gemini-multimodal';
+    } else {
+      finalProvider = 'gemini-image';
+    }
 
     // Generate image
     console.log('[API] Calling Image API:', { prompt, model: modelToUse, provider: finalProvider });
-    const imageBase64 = await callGeminiImageAPI(prompt, modelToUse, finalProvider);
+    const result = await callGeminiImageAPI(prompt, modelToUse, finalProvider);
 
-    if (!imageBase64) {
+    if (!result.imageBase64) {
       return res.status(500).json({ error: 'Failed to generate image' });
     }
 
     return res.status(200).json({
-      image: imageBase64, // Changed from imageBase64 to image for consistency
-      imageBase64 // Keep for backward compatibility
+      image: result.imageBase64,
+      imageBase64: result.imageBase64, // Backward compatibility
+      text: result.textContent || null // Only for multimodal
     });
   } catch (error) {
     console.error('[API] ERROR:', error);

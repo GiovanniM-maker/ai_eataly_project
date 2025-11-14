@@ -9,15 +9,10 @@ export const MODEL_INFO = {
   "gemini-1.5-pro": "Modello Pro della serie 1.5: ragionamento avanzato, multimodale, context window esteso.",
   "gemini-1.5-flash": "Modello Flash della serie 1.5: bilanciato tra velocità e qualità.",
   
-  // Image generation models
-  "imagen-3": "Modello Imagen 3: generazione immagini di alta qualità.",
-  "imagen-3-fast": "Modello Imagen 3 Fast: generazione rapida.",
-  "imagen-3-ultra": "Modello Imagen 3 Ultra: massima qualità.",
-  "imagen-4": "Modello text-to-image ad alta qualità della famiglia Imagen. Output molto realistici, dettagliati.",
-  "imagen-4-ultra": "Versione Ultra: risultati top-tier per rendering fotorealistici, prodotti, ritratti, scenari complessi.",
-  "imagen-4-fast": "Variante Fast: generazione rapida a qualità leggermente ridotta.",
-  "gemini-2.5-flash-image": "Variante specializzata immagini (Nano Banana): generazione, editing, fusioni, multi-image input.",
-  "gemini-1.5-pro-image": "Modello Gemini 1.5 Pro specializzato per generazione immagini.",
+  // Image generation models (ONLY 3 SUPPORTED)
+  "gemini-2.5-flash-image": "Gemini Image: generazione immagini usando generateContent con responseModalities: ['IMAGE'].",
+  "gemini-2.5-flash-image-multimodal": "Gemini Multimodal: genera testo + immagine usando responseModalities: ['TEXT','IMAGE'].",
+  "imagen-4": "Imagen 4: modello text-to-image ad alta qualità usando generateImage endpoint. Output molto realistici, dettagliati.",
   
   // Vision models
   "gemini-2.5-pro-vision": "Modello Vision multimodale avanzato: analisi immagini, video, documenti con ragionamento complesso.",
@@ -38,15 +33,10 @@ export const ALL_MODELS = [
   "gemini-2.5-flash-lite",
   "gemini-1.5-pro",
   "gemini-1.5-flash",
-  // Image generation models
-  "imagen-3",
-  "imagen-3-fast",
-  "imagen-3-ultra",
-  "imagen-4",
-  "imagen-4-ultra",
-  "imagen-4-fast",
+  // Image generation models (ONLY 3 SUPPORTED)
   "gemini-2.5-flash-image",
-  "gemini-1.5-pro-image",
+  "gemini-2.5-flash-image-multimodal",
+  "imagen-4",
   // Vision models
   "gemini-2.5-pro-vision",
   "gemini-1.5-pro-vision",
@@ -85,15 +75,10 @@ export const getModelDisplayName = (model) => {
     "gemini-2.5-flash-lite": "Gemini 2.5 Flash Lite",
     "gemini-1.5-pro": "Gemini 1.5 Pro",
     "gemini-1.5-flash": "Gemini 1.5 Flash",
-    // Image models
-    "imagen-3": "Imagen 3",
-    "imagen-3-fast": "Imagen 3 Fast",
-    "imagen-3-ultra": "Imagen 3 Ultra",
+    // Image models (ONLY 3 SUPPORTED)
+    "gemini-2.5-flash-image": "Gemini 2.5 Flash Image",
+    "gemini-2.5-flash-image-multimodal": "Gemini 2.5 Flash Image Multimodal",
     "imagen-4": "Imagen 4",
-    "imagen-4-ultra": "Imagen 4 Ultra",
-    "imagen-4-fast": "Imagen 4 Fast",
-    "gemini-2.5-flash-image": "Gemini 2.5 Flash Image (Nano Banana)",
-    "gemini-1.5-pro-image": "Gemini 1.5 Pro Image",
     // Vision models
     "gemini-2.5-pro-vision": "Gemini 2.5 Pro Vision",
     "gemini-1.5-pro-vision": "Gemini 1.5 Pro Vision",

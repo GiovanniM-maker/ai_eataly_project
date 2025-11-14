@@ -45,56 +45,25 @@ export function resolveModelConfig(modelName) {
   };
 
   // IMAGE GENERATION MODELS
-  // Imagen models use generateImage endpoint
-  // Gemini Image models use generateContent endpoint with responseMimeType
+  // Only 3 models supported
   const imageModels = {
-    'imagen-3': {
+    'gemini-2.5-flash-image': {
       type: 'image',
       endpoint: '/api/generateImage',
-      googleModel: 'imagen-3',
-      provider: 'imagen' // Uses generateImage endpoint
+      googleModel: 'gemini-2.5-flash-image',
+      provider: 'gemini-image' // Uses generateContent with responseModalities: ["IMAGE"]
     },
-    'imagen-3-fast': {
+    'gemini-2.5-flash-image-multimodal': {
       type: 'image',
       endpoint: '/api/generateImage',
-      googleModel: 'imagen-3-fast',
-      provider: 'imagen'
-    },
-    'imagen-3-ultra': {
-      type: 'image',
-      endpoint: '/api/generateImage',
-      googleModel: 'imagen-3-ultra',
-      provider: 'imagen'
+      googleModel: 'gemini-2.5-flash-image-multimodal',
+      provider: 'gemini-multimodal' // Uses generateContent with responseModalities: ["TEXT","IMAGE"]
     },
     'imagen-4': {
       type: 'image',
       endpoint: '/api/generateImage',
       googleModel: 'imagen-4',
-      provider: 'imagen'
-    },
-    'imagen-4-ultra': {
-      type: 'image',
-      endpoint: '/api/generateImage',
-      googleModel: 'imagen-4-ultra',
-      provider: 'imagen'
-    },
-    'imagen-4-fast': {
-      type: 'image',
-      endpoint: '/api/generateImage',
-      googleModel: 'imagen-4-fast',
-      provider: 'imagen'
-    },
-    'gemini-2.5-flash-image': {
-      type: 'image',
-      endpoint: '/api/generateImage',
-      googleModel: 'gemini-2.5-flash-image',
-      provider: 'gemini' // Uses generateContent endpoint
-    },
-    'gemini-1.5-pro-image': {
-      type: 'image',
-      endpoint: '/api/generateImage',
-      googleModel: 'gemini-1.5-pro-image',
-      provider: 'gemini'
+      provider: 'imagen' // Uses generateImage endpoint
     }
   };
 
