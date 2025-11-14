@@ -114,7 +114,12 @@ const getAccessToken = async () => {
  */
 const callGeminiAPI = async (model, message) => {
   const accessToken = await getAccessToken();
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  
+  // Determine API version based on model name
+  const apiVersion = model.startsWith("gemini-1.5") ? "v1" : "v1beta";
+  const endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent`;
+  
+  console.log("[API] Using API version:", apiVersion);
 
   const requestBody = {
     contents: [
