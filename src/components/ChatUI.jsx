@@ -147,7 +147,15 @@ const ChatUI = () => {
                   {message.content && (
                     <p className="whitespace-pre-wrap mb-2">{message.content}</p>
                   )}
-                  {/* Image from base64 (assistant) */}
+                  {/* Image from URL (saved in Firestore) */}
+                  {message.imageUrl && (
+                    <img
+                      src={message.imageUrl}
+                      alt={message.role === 'user' ? 'Uploaded image' : 'Generated image'}
+                      className="max-w-[240px] rounded-lg mt-2"
+                    />
+                  )}
+                  {/* Image from base64 (temporary, during upload) */}
                   {message.imageBase64 && (
                     <img
                       src={`data:image/png;base64,${message.imageBase64}`}
@@ -155,7 +163,7 @@ const ChatUI = () => {
                       className="max-w-[240px] rounded-lg mt-2"
                     />
                   )}
-                  {/* Image from local preview (user) */}
+                  {/* Image from local preview (temporary, user upload) */}
                   {message.localPreviewUrl && (
                     <img
                       src={message.localPreviewUrl}

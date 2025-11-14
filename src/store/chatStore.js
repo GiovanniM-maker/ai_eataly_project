@@ -76,7 +76,7 @@ export const useChatStore = create((set, get) => ({
           id: doc.id,
           role: data.role,
           content: data.text || '',
-          imageBase64: data.imageBase64 || null,
+          imageUrl: data.imageUrl || null,
           timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
           model: data.model || 'gemini-2.5-flash'
         });
@@ -126,7 +126,7 @@ export const useChatStore = create((set, get) => ({
                 id: change.doc.id,
                 role: data.role,
                 content: data.text || '',
-                imageBase64: data.imageBase64 || null,
+                imageUrl: data.imageUrl || null,
                 timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
                 model: data.model || 'gemini-2.5-flash'
               };
@@ -160,9 +160,60 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
+   * Upload base64 image to ImgBB and get URL
+   */
+  uploadBase64ToUrl: async (base64) => {
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || '/api/uploadImage';
+      
+      console.log('[Store] Uploading image to ImgBB...');
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          base64: base64
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { error: errorText || `HTTP ${response.status}` };
+        }
+        throw new Error(errorData.error || errorData.message || `Upload error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('[Store] Image uploaded to ImgBB, URL:', data.url);
+      return data.url;
+    } catch (error) {
+      console.error('[Store] Error uploading image to ImgBB:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Convert File to base64
+   */
+  fileToBase64: (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  },
+
+  /**
    * Save message to Firestore
    */
-  saveMessageToFirestore: async (role, text, model = 'gemini-2.5-flash', imageBase64 = null) => {
+  saveMessageToFirestore: async (role, text, model = 'gemini-2.5-flash', imageUrl = null) => {
     const { sessionId } = get();
     
     try {
@@ -171,8 +222,7 @@ export const useChatStore = create((set, get) => ({
         role,
         text: text || null,
         model,
-        imageUrl: null, // Images not saved to Firestore in this phase
-        imageBase64: imageBase64 || null, // Store base64 for assistant images
+        imageUrl: imageUrl || null,
         createdAt: serverTimestamp()
       };
 
@@ -191,6 +241,7 @@ export const useChatStore = create((set, get) => ({
    */
   sendImageMessage: async (file) => {
     const { sessionId } = get();
+    const tempMessageId = `temp-${Date.now()}`;
     
     try {
       // Create local preview URL
@@ -198,11 +249,10 @@ export const useChatStore = create((set, get) => ({
       
       // Add user message with image preview immediately to UI
       const userMessage = {
-        id: `temp-${Date.now()}`,
+        id: tempMessageId,
         role: 'user',
         content: '',
         localPreviewUrl,
-        imageFile: file,
         timestamp: Date.now()
       };
 
@@ -210,20 +260,46 @@ export const useChatStore = create((set, get) => ({
         messages: [...state.messages, userMessage]
       }));
 
-      // Save to Firestore (imageUrl: null as per requirements)
+      // Convert file to base64
+      console.log('[Store] Converting file to base64...');
+      const base64 = await get().fileToBase64(file);
+
+      // Upload to ImgBB
+      console.log('[Store] Uploading image to ImgBB...');
+      const imageUrl = await get().uploadBase64ToUrl(base64);
+
+      // Update message with imageUrl and remove localPreviewUrl
+      set(state => ({
+        messages: state.messages.map(msg => 
+          msg.id === tempMessageId
+            ? { ...msg, imageUrl, localPreviewUrl: null }
+            : msg
+        )
+      }));
+
+      // Clean up local preview URL
+      URL.revokeObjectURL(localPreviewUrl);
+
+      // Save to Firestore with imageUrl
       try {
-        await get().saveMessageToFirestore('user', null, 'gemini-2.5-flash', null);
+        await get().saveMessageToFirestore('user', null, 'gemini-2.5-flash', imageUrl);
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for image message:', firestoreError);
+        // Remove message from UI if Firestore save fails
+        set(state => ({
+          messages: state.messages.filter(msg => msg.id !== tempMessageId)
+        }));
+        throw new Error('Failed to save image message to Firestore');
       }
 
-      // Optionally call API to process image or generate response
-      // For now, just show the image in chat
-      console.log('[Store] Image message added to chat');
-
+      console.log('[Store] Image message uploaded and saved successfully');
       return true;
     } catch (error) {
       console.error('[Store] Error sending image message:', error);
+      // Remove message from UI on error
+      set(state => ({
+        messages: state.messages.filter(msg => msg.id !== tempMessageId)
+      }));
       throw error;
     }
   },
@@ -232,6 +308,8 @@ export const useChatStore = create((set, get) => ({
    * Generate image from prompt
    */
   generateImage: async (prompt) => {
+    const tempMessageId = `temp-${Date.now()}`;
+    
     try {
       const apiUrl = import.meta.env.VITE_API_URL || '/api/generateImage';
       
@@ -263,12 +341,12 @@ export const useChatStore = create((set, get) => ({
       const data = await response.json();
       console.log('[Store] Image generation response received');
 
-      // Add assistant message with image
+      // Add assistant message with base64 image (temporary)
       const assistantMessage = {
-        id: `temp-${Date.now()}`,
+        id: tempMessageId,
         role: 'assistant',
         content: '',
-        imageBase64: data.imageBase64,
+        imageBase64: data.imageBase64, // Temporary, will be replaced with URL
         timestamp: Date.now()
       };
 
@@ -276,16 +354,39 @@ export const useChatStore = create((set, get) => ({
         messages: [...state.messages, assistantMessage]
       }));
 
-      // Save to Firestore (imageUrl: null, but store imageBase64)
+      // Upload base64 to ImgBB
+      console.log('[Store] Uploading generated image to ImgBB...');
+      const imageUrl = await get().uploadBase64ToUrl(data.imageBase64);
+
+      // Update message with imageUrl and remove imageBase64
+      set(state => ({
+        messages: state.messages.map(msg => 
+          msg.id === tempMessageId
+            ? { ...msg, imageUrl, imageBase64: null }
+            : msg
+        )
+      }));
+
+      // Save to Firestore with imageUrl
       try {
-        await get().saveMessageToFirestore('assistant', null, 'gemini-2.5-flash', data.imageBase64);
+        await get().saveMessageToFirestore('assistant', '', 'gemini-2.5-flash', imageUrl);
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for generated image:', firestoreError);
+        // Remove message from UI if Firestore save fails
+        set(state => ({
+          messages: state.messages.filter(msg => msg.id !== tempMessageId)
+        }));
+        throw new Error('Failed to save generated image to Firestore');
       }
 
-      return data.imageBase64;
+      console.log('[Store] Generated image uploaded and saved successfully');
+      return imageUrl;
     } catch (error) {
       console.error('[Store] Error generating image:', error);
+      // Remove message from UI on error
+      set(state => ({
+        messages: state.messages.filter(msg => msg.id !== tempMessageId)
+      }));
       throw error;
     }
   },
