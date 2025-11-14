@@ -916,41 +916,100 @@ export const useChatStore = create((set, get) => ({
       }
 
       const data = await response.json();
-      console.log('[Store] Image generation response received');
+      console.log('[Store] Nanobanana response received');
       
-      // Extract imageBase64 from response
+      // Handle TEXT+IMAGE, TEXT, or IMAGE responses
+      const hasText = data.text || data.reply;
       const imageBase64 = data.image || data.imageBase64;
       
-      if (!imageBase64) {
-        console.error('[Store] No image data in response:', data);
-        throw new Error('No image data in API response');
+      if (hasText && imageBase64) {
+        // TEXT+IMAGE mode
+        const imageDataUrl = `data:image/png;base64,${imageBase64}`;
+        
+        // Add text message first
+        const textMessage = {
+          id: tempMessageId,
+          role: 'assistant',
+          content: hasText,
+          model: modelToUse,
+          messageType: 'text',
+          timestamp: Date.now()
+        };
+        
+        // Add image message
+        const imageMessage = {
+          id: `${tempMessageId}-img`,
+          type: 'image',
+          role: 'assistant',
+          sender: 'assistant',
+          model: modelToUse,
+          base64: imageDataUrl,
+          timestamp: Date.now() + 1
+        };
+        
+        set(state => ({
+          messages: [...state.messages, textMessage, imageMessage]
+        }));
+        
+        // Save text to Firestore
+        try {
+          await get().saveMessageWithoutImageToFirestore('assistant', hasText, modelToUse);
+        } catch (firestoreError) {
+          console.warn('[Store] Firestore save failed for assistant text:', firestoreError);
+        }
+        
+        console.log('[Store] TEXT+IMAGE messages added to UI');
+        return imageDataUrl;
+      } else if (hasText) {
+        // TEXT only mode
+        const textMessage = {
+          id: tempMessageId,
+          role: 'assistant',
+          content: hasText,
+          model: modelToUse,
+          messageType: 'text',
+          timestamp: Date.now()
+        };
+        
+        set(state => ({
+          messages: [...state.messages, textMessage]
+        }));
+        
+        // Save text to Firestore
+        try {
+          await get().saveMessageWithoutImageToFirestore('assistant', hasText, modelToUse);
+        } catch (firestoreError) {
+          console.warn('[Store] Firestore save failed for assistant text:', firestoreError);
+        }
+        
+        console.log('[Store] TEXT message added to UI');
+        return hasText;
+      } else if (imageBase64) {
+        // IMAGE only mode
+        const imageDataUrl = `data:image/png;base64,${imageBase64}`;
+        
+        const assistantMessage = {
+          id: tempMessageId,
+          type: 'image',
+          role: 'assistant',
+          sender: 'assistant',
+          model: modelToUse,
+          base64: imageDataUrl,
+          timestamp: Date.now()
+        };
+
+        set(state => ({
+          messages: [...state.messages, assistantMessage]
+        }));
+
+        console.log('[Store] Image message added to UI, rendering from base64');
+        console.log('[Store] Image saved in local cache (NOT persisted).');
+
+        return imageDataUrl;
+      } else {
+        console.error('[Store] No text or image data in response:', data);
+        throw new Error('No text or image data in API response');
       }
-
-      // Create data URL for immediate display: "data:image/png;base64,..."
-      const imageDataUrl = `data:image/png;base64,${imageBase64}`;
-      
-      console.log('[Store] Image extracted from API response');
-      console.log('[Store] Final base64 length:', imageBase64.length, 'characters');
-
-      // Add assistant message with base64 image (local cache only)
-      const assistantMessage = {
-        id: tempMessageId,
-        type: 'image',
-        role: 'assistant',
-        sender: 'assistant',
-        model: modelToUse,
-        base64: imageDataUrl, // Store as data URL for display
-        timestamp: Date.now()
-      };
-
-      set(state => ({
-        messages: [...state.messages, assistantMessage]
-      }));
-
-      console.log('[Store] Image message added to UI, rendering from base64');
-      console.log('[Store] Image saved in local cache (NOT persisted).');
-
-      return imageDataUrl;
     } catch (error) {
       console.error('[Store] Error generating Nanobanana image:', error);
       // Remove message from UI on error
