@@ -23,6 +23,7 @@ import {
 import { db, app } from '../config/firebase';
 import { DEFAULT_MODEL, isImagenModel } from '../constants/models';
 import { resolveModelConfig } from '../lib/modelRouter';
+import { loadPipelineConfig as loadChatPipelineConfig, savePipelineConfig as saveChatPipelineConfig } from '../lib/pipelineConfig';
 
 /**
  * Get or create user ID from localStorage
@@ -1034,6 +1035,7 @@ export const useChatStore = create((set, get) => ({
 
   /**
    * Send a message using automatic model routing
+   * Includes pipeline pre-processing if enabled
    */
   sendMessage: async (message) => {
     const { activeChatId, sessionId, selectedModel } = get();
@@ -1047,15 +1049,78 @@ export const useChatStore = create((set, get) => ({
     }
     
     try {
-      // Resolve model configuration (endpoint, type, googleModel)
+      // 1) Load pipeline config for this chat
+      let finalUserMessage = message;
+      let pipelineUsed = false;
+      
+      try {
+        const pipeline = await loadChatPipelineConfig(chatId);
+        
+        if (pipeline.enabled && pipeline.model && pipeline.systemInstruction) {
+          console.log('[PIPELINE] Enabled: true');
+          console.log('[PIPELINE] Model used:', pipeline.model);
+          console.log('[PIPELINE] System instruction length:', pipeline.systemInstruction.length);
+          console.log('[PIPELINE] Preprocessed user input:', message);
+          
+          // Call pre-model API
+          const apiUrl = import.meta.env.VITE_API_URL || '/api/chat';
+          const preModelConfig = resolveModelConfig(pipeline.model);
+          
+          // Build system instruction tag (Gemini format)
+          const systemTag = pipeline.systemInstruction && pipeline.systemInstruction.trim() !== ""
+            ? `<system_instruction>${pipeline.systemInstruction}</system_instruction>\n`
+            : "";
+          
+          const preMessageText = systemTag + message;
+          
+          const preModelSettings = {
+            temperature: pipeline.temperature,
+            top_p: pipeline.topP,
+            max_output_tokens: pipeline.maxTokens
+          };
+          
+          console.log('[PIPELINE] Calling pre-model API:', pipeline.model);
+          
+          const preResponse = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              message: preMessageText,
+              model: preModelConfig.googleModel,
+              modelSettings: preModelSettings
+            }),
+          });
+          
+          if (!preResponse.ok) {
+            throw new Error(`Pre-model API error: ${preResponse.status}`);
+          }
+          
+          const preData = await preResponse.json();
+          finalUserMessage = preData.reply || message;
+          pipelineUsed = true;
+          
+          console.log('[PIPELINE] Output from pre-model:', finalUserMessage);
+          console.log('[PIPELINE] Forwarding to main model');
+        } else {
+          console.log('[PIPELINE] Disabled or incomplete config');
+        }
+      } catch (pipelineError) {
+        console.error('[PIPELINE] Error in pipeline pre-processing:', pipelineError);
+        console.warn('[PIPELINE] Continuing with original message');
+        // Continue with original message if pipeline fails
+      }
+      
+      // 2) Resolve model configuration (endpoint, type, googleModel)
       const config = resolveModelConfig(selectedModel);
       console.log('[Store] Model config resolved:', config);
 
-      // Add user message immediately to UI
+      // 3) Add user message immediately to UI (show original message, not preprocessed)
       const userMessage = {
         id: `temp-${Date.now()}`,
         role: 'user',
-        content: message,
+        content: message, // Show original message to user
         model: selectedModel,
         messageType: config.type,
         timestamp: Date.now()
@@ -1065,7 +1130,7 @@ export const useChatStore = create((set, get) => ({
         messages: [...state.messages, userMessage]
       }));
 
-      // Save user message to Firestore (TEXT ONLY - images are not persisted)
+      // 4) Save user message to Firestore (TEXT ONLY - images are not persisted)
       if (config.type !== 'image') {
         try {
           await get().saveMessageWithoutImageToFirestore('user', message, selectedModel);
@@ -1109,7 +1174,7 @@ export const useChatStore = create((set, get) => ({
             },
             signal: controller.signal,
             body: JSON.stringify({
-              message: message,
+              message: finalUserMessage, // Use preprocessed message if pipeline was used
               model: config.googleModel,
               ...(modelSettings && { modelSettings }),
               debugMode: debugMode
@@ -1556,88 +1621,62 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * Pipeline Configuration Management
+   * Pipeline Configuration Management (per-chat)
    */
-  pipelineConfig: null, // Cache for pipeline config
+  pipelineConfig: null, // Cache for current chat's pipeline config
 
   /**
-   * Load pipeline configuration from Firestore
+   * Load pipeline configuration for current active chat
    */
   loadPipelineConfig: async () => {
     try {
-      // Check cache first
-      const { pipelineConfig } = get();
-      if (pipelineConfig) {
-        return pipelineConfig;
-      }
-
-      console.log('[Store] Loading pipeline config');
-      const configRef = doc(db, 'configs', 'modelPipeline');
-      const configSnap = await getDoc(configRef);
-
-      if (configSnap.exists()) {
-        const data = configSnap.data();
-        const config = {
-          enabled: data.enabled || false,
-          preModel: data.preModel || null,
-          instructions: data.instructions || '',
-          extraPrompt: data.extraPrompt || '',
-          temperature: data.temperature ?? 0.4,
-          topP: data.topP ?? 0.9
-        };
-        
-        // Update cache
-        set({ pipelineConfig: config });
-        return config;
-      } else {
-        // Create default config
-        const defaultConfig = {
+      const { activeChatId } = get();
+      if (!activeChatId) {
+        return {
           enabled: false,
-          preModel: null,
-          instructions: '',
-          extraPrompt: '',
-          temperature: 0.4,
-          topP: 0.9
+          model: null,
+          systemInstruction: '',
+          temperature: 0.8,
+          topP: 0.95,
+          maxTokens: 2048
         };
-        
-        // Save default to Firestore
-        await setDoc(configRef, defaultConfig);
-        
-        // Update cache
-        set({ pipelineConfig: defaultConfig });
-        return defaultConfig;
       }
+
+      // Load from Firestore using the new per-chat structure
+      const config = await loadChatPipelineConfig(activeChatId);
+      
+      // Update cache
+      set({ pipelineConfig: config });
+      
+      return config;
     } catch (error) {
       console.error('[Store] Error loading pipeline config:', error);
-      // Return default config on error
       return {
         enabled: false,
-        preModel: null,
-        instructions: '',
-        extraPrompt: '',
-        temperature: 0.4,
-        topP: 0.9
+        model: null,
+        systemInstruction: '',
+        temperature: 0.8,
+        topP: 0.95,
+        maxTokens: 2048
       };
     }
   },
 
   /**
-   * Save pipeline configuration to Firestore
+   * Save pipeline configuration for current active chat
    */
   savePipelineConfig: async (config) => {
     try {
-      console.log('[Store] Saving pipeline config');
-      const configRef = doc(db, 'configs', 'modelPipeline');
-      
-      const configData = {
-        ...config,
-        updatedAt: Date.now()
-      };
-      
-      await setDoc(configRef, configData, { merge: true });
+      const { activeChatId } = get();
+      if (!activeChatId) {
+        throw new Error('No active chat to save pipeline config');
+      }
+
+      console.log('[Store] Saving pipeline config for chat:', activeChatId);
+      await saveChatPipelineConfig(activeChatId, config);
       
       // Update cache
-      set({ pipelineConfig: configData });
+      set({ pipelineConfig: config });
       
       console.log('[Store] Pipeline config saved successfully');
       return true;

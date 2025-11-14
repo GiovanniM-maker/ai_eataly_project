@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useChatStore, testFirestoreRead, testFirestoreWrite } from '../store/chatStore';
 import ModelSelector from './ModelSelector';
 import ModelSettings from './ModelSettings';
+import PipelineConfig from './PipelineConfig';
 import { getModelDisplayName } from '../constants/models';
 
 /**
@@ -39,7 +40,7 @@ const ChatUI = () => {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  const { activeChatId, loadChatsFromFirestore } = useChatStore();
+  const { activeChatId, loadChatsFromFirestore, pipelineConfig: currentPipelineConfig } = useChatStore();
 
   // Load chats and messages on mount
   useEffect(() => {
@@ -251,7 +252,18 @@ const ChatUI = () => {
     <div className="flex flex-col flex-1 h-screen bg-gray-950 text-white">
       {/* Header */}
       <div className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">AI Chat</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">AI Chat</h1>
+          {/* Pipeline Active Badge */}
+          {currentPipelineConfig?.enabled && currentPipelineConfig?.model && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 bg-purple-900/50 border border-purple-700 rounded text-xs text-purple-200">
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Pipeline attiva
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           <ModelSelector />
           <button
@@ -266,8 +278,12 @@ const ChatUI = () => {
           </button>
           <button
             onClick={() => setShowPipelineConfig(true)}
-            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
-            title="Il modello prima"
+            className={`px-3 py-2 rounded-lg transition-colors text-sm ${
+              currentPipelineConfig?.enabled 
+                ? 'bg-purple-700 hover:bg-purple-600 text-white' 
+                : 'bg-gray-700 hover:bg-gray-600 text-white'
+            }`}
+            title="Modello prima"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />

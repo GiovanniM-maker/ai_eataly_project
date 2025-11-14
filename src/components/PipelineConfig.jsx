@@ -1,33 +1,54 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useChatStore } from '../store/chatStore';
 import { ALL_MODELS, getModelDisplayName } from '../constants/models';
+import { loadPipelineConfig, savePipelineConfig } from '../lib/pipelineConfig';
 
 /**
  * Pipeline Config Modal - "Il modello prima" configuration
+ * Per chat specifica: users/{uid}/chats/{chatId}/pipeline
  */
 const PipelineConfig = ({ isOpen, onClose }) => {
-  const { loadPipelineConfig, savePipelineConfig } = useChatStore();
+  const { activeChatId } = useChatStore();
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const saveTimeoutRef = useRef(null);
 
-  // Load config on mount
+  // Load config when modal opens or chat changes
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && activeChatId) {
       loadConfig();
+    } else if (isOpen && !activeChatId) {
+      // No active chat, use default config
+      setConfig(getDefaultConfig());
+      setHasChanges(false);
     }
-  }, [isOpen]);
+  }, [isOpen, activeChatId]);
+
+  const getDefaultConfig = () => ({
+    enabled: false,
+    model: null,
+    systemInstruction: '',
+    temperature: 0.8,
+    topP: 0.95,
+    maxTokens: 2048
+  });
 
   const loadConfig = async () => {
+    if (!activeChatId) {
+      setConfig(getDefaultConfig());
+      return;
+    }
+
     setLoading(true);
     try {
-      const loadedConfig = await loadPipelineConfig();
+      const loadedConfig = await loadPipelineConfig(activeChatId);
       setConfig(loadedConfig);
       setHasChanges(false);
     } catch (error) {
-      console.error('Error loading pipeline config:', error);
-      alert('Error loading configuration: ' + error.message);
+      console.error('[PipelineConfig] Error loading config:', error);
+      setConfig(getDefaultConfig());
     } finally {
       setLoading(false);
     }
@@ -39,19 +60,36 @@ const PipelineConfig = ({ isOpen, onClose }) => {
       [field]: value
     }));
     setHasChanges(true);
+
+    // Auto-save with debounce (400ms)
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      handleSave(true); // silent save
+    }, 400);
   };
 
-  const handleSave = async () => {
-    if (!config) return;
+  const handleSave = async (silent = false) => {
+    if (!config || !activeChatId) {
+      if (!activeChatId && !silent) {
+        alert('Nessuna chat attiva. Crea una nuova chat prima di configurare la pipeline.');
+      }
+      return;
+    }
     
     setSaving(true);
     try {
-      await savePipelineConfig(config);
+      await savePipelineConfig(activeChatId, config);
       setHasChanges(false);
-      alert('Pipeline configuration saved successfully!');
+      if (!silent) {
+        alert('Pipeline configuration saved successfully!');
+      }
     } catch (error) {
-      console.error('Error saving pipeline config:', error);
-      alert('Error saving configuration: ' + error.message);
+      console.error('[PipelineConfig] Error saving config:', error);
+      if (!silent) {
+        alert('Error saving configuration: ' + error.message);
+      }
     } finally {
       setSaving(false);
     }
@@ -76,7 +114,7 @@ const PipelineConfig = ({ isOpen, onClose }) => {
       <div className="bg-gray-900 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-white">Il modello prima</h2>
+          <h2 className="text-xl font-semibold text-white">Modello Prima (Pipeline)</h2>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-white transition-colors"
@@ -116,11 +154,11 @@ const PipelineConfig = ({ isOpen, onClose }) => {
               {/* Pre-Model Selector */}
               <div>
                 <label className="block text-white font-medium mb-2">
-                  Modello pre-processing
+                  Modello pre-processing *
                 </label>
                 <select
-                  value={config.preModel || ''}
-                  onChange={(e) => handleConfigChange('preModel', e.target.value || null)}
+                  value={config.model || ''}
+                  onChange={(e) => handleConfigChange('model', e.target.value || null)}
                   disabled={!config.enabled}
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -136,33 +174,18 @@ const PipelineConfig = ({ isOpen, onClose }) => {
                 </p>
               </div>
 
-              {/* Instructions Textarea */}
+              {/* System Instructions Textarea */}
               <div>
                 <label className="block text-white font-medium mb-2">
-                  Istruzioni sistema (per pre-model)
+                  Istruzioni sistema (per pre-model) *
                 </label>
                 <textarea
-                  value={config.instructions}
-                  onChange={(e) => handleConfigChange('instructions', e.target.value)}
+                  value={config.systemInstruction}
+                  onChange={(e) => handleConfigChange('systemInstruction', e.target.value)}
                   disabled={!config.enabled}
                   rows={4}
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="Esempio: 'Riformula il messaggio dell'utente in modo più chiaro e strutturato...'"
-                />
-              </div>
-
-              {/* Extra Prompt Textarea */}
-              <div>
-                <label className="block text-white font-medium mb-2">
-                  Prompt aggiuntivo (opzionale)
-                </label>
-                <textarea
-                  value={config.extraPrompt}
-                  onChange={(e) => handleConfigChange('extraPrompt', e.target.value)}
-                  disabled={!config.enabled}
-                  rows={3}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none disabled:opacity-50 disabled:cursor-not-allowed"
-                  placeholder="Prompt opzionale da inviare prima del messaggio utente..."
                 />
               </div>
 
@@ -207,6 +230,26 @@ const PipelineConfig = ({ isOpen, onClose }) => {
                   <span>1.0</span>
                 </div>
               </div>
+
+              {/* Max Tokens Input */}
+              <div>
+                <label className="block text-white font-medium mb-2">
+                  Max Tokens
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="32768"
+                  step="1"
+                  value={config.maxTokens}
+                  onChange={(e) => handleConfigChange('maxTokens', parseInt(e.target.value) || 2048)}
+                  disabled={!config.enabled}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <p className="mt-1 text-xs text-gray-400">
+                  Massimo numero di token generati (1-32768)
+                </p>
+              </div>
             </>
           ) : (
             <div className="text-center text-gray-400 py-8">
@@ -216,21 +259,34 @@ const PipelineConfig = ({ isOpen, onClose }) => {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-800 flex items-center justify-end gap-3">
-          <button
-            onClick={handleReset}
-            disabled={!hasChanges || saving}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-          >
-            Reset
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!hasChanges || saving || loading}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-          >
-            {saving ? 'Saving...' : 'Save'}
-          </button>
+        <div className="px-6 py-4 border-t border-gray-800 flex items-center justify-between">
+          {!activeChatId && (
+            <p className="text-sm text-yellow-400">
+              ⚠️ Crea una chat per configurare la pipeline
+            </p>
+          )}
+          <div className="flex items-center gap-3 ml-auto">
+            <button
+              onClick={handleReset}
+              disabled={!hasChanges || saving || !activeChatId}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+            >
+              Reset
+            </button>
+            <button
+              onClick={() => handleSave(false)}
+              disabled={saving || loading || !activeChatId}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+            >
+              {saving ? 'Saving...' : 'Salva'}
+            </button>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
+            >
+              Chiudi
+            </button>
+          </div>
         </div>
       </div>
     </div>

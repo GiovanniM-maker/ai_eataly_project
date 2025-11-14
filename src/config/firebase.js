@@ -58,9 +58,20 @@ export { app };
 // Log active Firebase apps after initialization
 console.log("🔥 Firebase Apps attive:", getApps());
 
-// Initialize Firestore
-export const db = getFirestore(app);
+// Initialize Firestore only if app is valid
+let db;
+try {
+  if (app && app.name !== 'dummy-app') {
+    db = getFirestore(app);
+    // Enable extreme debug logging
+    setLogLevel("debug");
+    console.log("✅ Firestore initialized successfully");
+  } else {
+    console.warn("⚠️ Firestore not initialized - using dummy Firebase app");
+  }
+} catch (error) {
+  console.error("❌ Firestore initialization error:", error);
+}
 
-// Enable extreme debug logging
-setLogLevel("debug");
+export { db };
 
