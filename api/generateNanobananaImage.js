@@ -30,29 +30,110 @@ function deepScan(o) {
 /**
  * Robust extractor for base64 image from Vertex AI response
  */
-function extractImageBase64(obj) {
-  // Try 1: inlineData.data (camelCase)
+function extractImageBase64(obj, debugMode = false) {
+  if (debugMode) {
+    console.log("[API:NANOBANANA] ============ EXTRACT IMAGE DEBUG =============");
+    console.log("[API:NANOBANANA] Full response structure:", JSON.stringify(obj, null, 2));
+  }
+
+  // Try 1: inlineData.data (camelCase) - most common
   try {
-    return obj.candidates[0].content.parts[0].inlineData.data;
-  } catch {}
+    const data = obj.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (data && typeof data === 'string' && data.length > 100) {
+      if (debugMode) console.log("[API:NANOBANANA] ✅ Found image at: candidates[0].content.parts[0].inlineData.data");
+      return data;
+    }
+  } catch (e) {
+    if (debugMode) console.log("[API:NANOBANANA] ❌ Try 1 failed:", e.message);
+  }
 
   // Try 2: inline_data.data (snake_case)
   try {
-    return obj.candidates[0].content.parts[0].inline_data.data;
-  } catch {}
+    const data = obj.candidates?.[0]?.content?.parts?.[0]?.inline_data?.data;
+    if (data && typeof data === 'string' && data.length > 100) {
+      if (debugMode) console.log("[API:NANOBANANA] ✅ Found image at: candidates[0].content.parts[0].inline_data.data");
+      return data;
+    }
+  } catch (e) {
+    if (debugMode) console.log("[API:NANOBANANA] ❌ Try 2 failed:", e.message);
+  }
 
   // Try 3: media.data
   try {
-    return obj.candidates[0].content.parts[0].media.data;
-  } catch {}
+    const data = obj.candidates?.[0]?.content?.parts?.[0]?.media?.data;
+    if (data && typeof data === 'string' && data.length > 100) {
+      if (debugMode) console.log("[API:NANOBANANA] ✅ Found image at: candidates[0].content.parts[0].media.data");
+      return data;
+    }
+  } catch (e) {
+    if (debugMode) console.log("[API:NANOBANANA] ❌ Try 3 failed:", e.message);
+  }
 
   // Try 4: image.base64
   try {
-    return obj.candidates[0].content.parts[0].image.base64;
-  } catch {}
+    const data = obj.candidates?.[0]?.content?.parts?.[0]?.image?.base64;
+    if (data && typeof data === 'string' && data.length > 100) {
+      if (debugMode) console.log("[API:NANOBANANA] ✅ Found image at: candidates[0].content.parts[0].image.base64");
+      return data;
+    }
+  } catch (e) {
+    if (debugMode) console.log("[API:NANOBANANA] ❌ Try 4 failed:", e.message);
+  }
 
-  // Try 5: deep scan recursive
-  return deepScan(obj);
+  // Try 5: Check all parts for inlineData
+  try {
+    const parts = obj.candidates?.[0]?.content?.parts || [];
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (part.inlineData?.data) {
+        const data = part.inlineData.data;
+        if (typeof data === 'string' && data.length > 100) {
+          if (debugMode) console.log(`[API:NANOBANANA] ✅ Found image at: candidates[0].content.parts[${i}].inlineData.data`);
+          return data;
+        }
+      }
+      if (part.inline_data?.data) {
+        const data = part.inline_data.data;
+        if (typeof data === 'string' && data.length > 100) {
+          if (debugMode) console.log(`[API:NANOBANANA] ✅ Found image at: candidates[0].content.parts[${i}].inline_data.data`);
+          return data;
+        }
+      }
+    }
+  } catch (e) {
+    if (debugMode) console.log("[API:NANOBANANA] ❌ Try 5 (all parts) failed:", e.message);
+  }
+
+  // Try 6: deep scan recursive
+  if (debugMode) console.log("[API:NANOBANANA] Attempting deep scan...");
+  const deepScanResult = deepScan(obj);
+  if (deepScanResult) {
+    if (debugMode) console.log("[API:NANOBANANA] ✅ Found image via deep scan");
+    return deepScanResult;
+  }
+
+  if (debugMode) {
+    console.log("[API:NANOBANANA] ❌ All extraction methods failed");
+    console.log("[API:NANOBANANA] Response keys:", Object.keys(obj));
+    if (obj.candidates) {
+      console.log("[API:NANOBANANA] Candidates count:", obj.candidates.length);
+      if (obj.candidates[0]) {
+        console.log("[API:NANOBANANA] Candidate[0] keys:", Object.keys(obj.candidates[0]));
+        if (obj.candidates[0].content) {
+          console.log("[API:NANOBANANA] Content keys:", Object.keys(obj.candidates[0].content));
+          if (obj.candidates[0].content.parts) {
+            console.log("[API:NANOBANANA] Parts count:", obj.candidates[0].content.parts.length);
+            obj.candidates[0].content.parts.forEach((part, idx) => {
+              console.log(`[API:NANOBANANA] Part[${idx}] keys:`, Object.keys(part));
+            });
+          }
+        }
+      }
+    }
+    console.log("[API:NANOBANANA] ============================================");
+  }
+
+  return null;
 }
 
 /**
@@ -197,7 +278,7 @@ const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = nul
 
   // Extract both text and image based on outputType (reuse the same variable declared above)
   const text = extractText(data);
-  const imageBase64 = extractImageBase64(data);
+  const imageBase64 = extractImageBase64(data, DEBUG_MODE);
 
   if (DEBUG_MODE) {
     console.log("[DEBUG] ============ EXTRACTED =========");
@@ -216,11 +297,16 @@ const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = nul
   } else {
     // IMAGE mode
     if (!imageBase64) {
-      console.error("[API:NANOBANANA] Failed to extract image from response");
-      if (DEBUG_MODE) {
-        console.error("[DEBUG] Full response structure:", JSON.stringify(data, null, 2));
+      console.error("[API:NANOBANANA] ========================================");
+      console.error("[API:NANOBANANA] ❌ FAILED TO EXTRACT IMAGE");
+      console.error("[API:NANOBANANA] Response status:", response.status);
+      console.error("[API:NANOBANANA] Response structure:", JSON.stringify(data, null, 2));
+      console.error("[API:NANOBANANA] Candidates:", data.candidates?.length || 0);
+      if (data.candidates?.[0]) {
+        console.error("[API:NANOBANANA] Candidate[0] structure:", JSON.stringify(data.candidates[0], null, 2));
       }
-      throw new Error('No image data found in Nanobanana API response');
+      console.error("[API:NANOBANANA] ========================================");
+      throw new Error('No image data found in Nanobanana API response. Check logs for response structure.');
     }
     return { text: null, imageBase64, rawResponse: DEBUG_MODE ? data : undefined };
   }
