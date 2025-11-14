@@ -1,5 +1,5 @@
 import { createSign } from 'crypto';
-import { loadModelConfigFromFirestore } from './helpers/firestoreConfig';
+import { loadModelConfig } from './helpers/firestoreConfig.js';
 
 // CORS allowed origins
 const ALLOWED_ORIGINS = [
@@ -221,7 +221,7 @@ export default async function handler(req, res) {
 
     // Load model configuration from Firestore
     console.log('[API] Loading model config from Firestore...');
-    const modelConfig = await loadModelConfigFromFirestore(model);
+    const modelConfig = await loadModelConfig(model);
     
     // Check if model is enabled
     if (!modelConfig.enabled) {

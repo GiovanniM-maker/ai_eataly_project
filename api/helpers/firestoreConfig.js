@@ -4,6 +4,14 @@ import { GoogleAuth } from "google-auth-library";
  * Load model configuration from Firestore using REST API
  * Uses Firestore REST API v1 with service account authentication
  */
+export async function loadModelConfig(modelId) {
+  return loadModelConfigFromFirestore(modelId);
+}
+
+/**
+ * Load model configuration from Firestore using REST API
+ * Uses Firestore REST API v1 with service account authentication
+ */
 export async function loadModelConfigFromFirestore(modelId) {
   try {
     const sa = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
@@ -118,5 +126,98 @@ function getDefaultConfig(modelId) {
     enabled: true,
     updatedAt: Date.now()
   };
+}
+
+/**
+ * Save model configuration to Firestore using REST API
+ * Uses Firestore REST API v1 with service account authentication
+ */
+export async function saveModelConfig(modelId, data) {
+  try {
+    const sa = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    const projectId = sa.project_id || 'eataly-creative-ai-suite';
+    
+    // Get access token with cloud-platform scope (works for Firestore)
+    const auth = new GoogleAuth({
+      credentials: sa,
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
+    const client = await auth.getClient();
+    const { token: accessToken } = await client.getAccessToken();
+    
+    // Firestore REST API v1 endpoint
+    const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/modelConfigs/${modelId}`;
+    
+    console.log(`[Config] Saving config for ${modelId} to Firestore...`);
+    
+    // Convert data to Firestore document format
+    const fields = {
+      modelId: { stringValue: data.modelId || modelId },
+      displayName: { stringValue: data.displayName || modelId },
+      description: { stringValue: data.description || '' },
+      systemPrompt: { stringValue: data.systemPrompt || '' },
+      temperature: { doubleValue: data.temperature ?? 0.7 },
+      topP: { doubleValue: data.topP ?? 0.95 },
+      maxOutputTokens: { integerValue: String(data.maxOutputTokens ?? 8192) },
+      outputType: { stringValue: data.outputType || 'TEXT' },
+      aspectRatio: { stringValue: data.aspectRatio || '1:1' },
+      sampleCount: { integerValue: String(data.sampleCount ?? 1) },
+      enabled: { booleanValue: data.enabled !== false },
+      updatedAt: { integerValue: String(Date.now()) }
+    };
+    
+    // Add safetySettings if present
+    if (data.safetySettings && Object.keys(data.safetySettings).length > 0) {
+      fields.safetySettings = { mapValue: { fields: convertToFirestoreMap(data.safetySettings) } };
+    }
+    
+    const requestBody = {
+      fields: fields
+    };
+    
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Config] Firestore save error ${response.status}:`, errorText);
+      throw new Error(`Firestore save error: ${response.status}`);
+    }
+    
+    console.log(`[Config] Saved config for ${modelId}`);
+    return true;
+  } catch (error) {
+    console.error(`[Config] Error saving config for ${modelId}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Convert object to Firestore map format
+ */
+function convertToFirestoreMap(obj) {
+  const fields = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (typeof value === 'string') {
+      fields[key] = { stringValue: value };
+    } else if (typeof value === 'number') {
+      if (Number.isInteger(value)) {
+        fields[key] = { integerValue: String(value) };
+      } else {
+        fields[key] = { doubleValue: value };
+      }
+    } else if (typeof value === 'boolean') {
+      fields[key] = { booleanValue: value };
+    } else if (typeof value === 'object' && value !== null) {
+      fields[key] = { mapValue: { fields: convertToFirestoreMap(value) } };
+    }
+  }
+  return fields;
 }
 

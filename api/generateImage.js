@@ -1,5 +1,5 @@
 import { GoogleAuth } from "google-auth-library";
-import { loadModelConfigFromFirestore } from './helpers/firestoreConfig';
+import { loadModelConfig } from './helpers/firestoreConfig.js';
 
 // CORS allowed origins
 const ALLOWED_ORIGINS = [
@@ -168,7 +168,7 @@ export default async function handler(req, res) {
 
     // Load model configuration from Firestore
     console.log('[API:IMAGEN] Loading model config from Firestore...');
-    const modelConfig = await loadModelConfigFromFirestore(modelToUse);
+    const modelConfig = await loadModelConfig(modelToUse);
     
     // Check if model is enabled
     if (!modelConfig.enabled) {
