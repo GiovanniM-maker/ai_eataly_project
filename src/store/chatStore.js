@@ -9,14 +9,32 @@ import {
   query, 
   orderBy, 
   onSnapshot,
-  serverTimestamp 
+  serverTimestamp,
+  updateDoc,
+  deleteDoc,
+  writeBatch,
+  Timestamp
 } from 'firebase/firestore';
 import { db, app } from '../config/firebase';
 import { DEFAULT_MODEL, isImagenModel } from '../constants/models';
 import { resolveModelConfig } from '../lib/modelRouter';
 
 /**
- * Get or create session ID from localStorage
+ * Get or create user ID from localStorage
+ */
+const getUserId = () => {
+  const stored = localStorage.getItem('user_id');
+  if (stored) {
+    return stored;
+  }
+  const newUserId = uuidv4();
+  localStorage.setItem('user_id', newUserId);
+  console.log('[Store] New user ID created:', newUserId);
+  return newUserId;
+};
+
+/**
+ * Get or create session ID from localStorage (legacy, now uses activeChatId)
  */
 const getSessionId = () => {
   const stored = localStorage.getItem('chat_session_id');
@@ -30,10 +48,18 @@ const getSessionId = () => {
 };
 
 /**
+ * Get chats collection reference
+ */
+const getChatsRef = (userId) => {
+  return collection(db, 'users', userId, 'chats');
+};
+
+/**
  * Get messages collection reference
  */
-const getMessagesRef = (sessionId) => {
-  return collection(db, 'chats', sessionId, 'messages');
+const getMessagesRef = (chatId) => {
+  const userId = getUserId();
+  return collection(db, 'users', userId, 'chats', chatId, 'messages');
 };
 
 /**
@@ -48,11 +74,13 @@ const isDuplicate = (messages, newMessage) => {
 };
 
 /**
- * Minimal chat store with Firestore persistence
+ * Chat store with Firestore persistence and sidebar management
  */
 export const useChatStore = create((set, get) => ({
   messages: [],
-  sessionId: getSessionId(),
+  sessionId: getSessionId(), // Legacy support
+  activeChatId: null, // Current active chat ID
+  chats: [], // List of all chats
   firestoreError: null,
   unsubscribe: null,
   loading: false,
@@ -67,15 +95,348 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * Load messages from Firestore
+   * Load all chats from Firestore
    */
-  loadMessages: async () => {
-    const { sessionId } = get();
+  loadChatsFromFirestore: async () => {
+    const userId = getUserId();
     set({ loading: true, firestoreError: null });
 
     try {
-      console.log('[Store] Loading messages for session:', sessionId);
-      const messagesRef = getMessagesRef(sessionId);
+      console.log('[Store] Loading chats for user:', userId);
+      const chatsRef = getChatsRef(userId);
+      
+      // Query: orderBy pinned desc, orderBy order asc, orderBy updatedAt desc
+      const q = query(
+        chatsRef,
+        orderBy('pinned', 'desc'),
+        orderBy('order', 'asc'),
+        orderBy('updatedAt', 'desc')
+      );
+      
+      const querySnapshot = await getDocs(q);
+      const loadedChats = [];
+      
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        loadedChats.push({
+          id: doc.id,
+          title: data.title || 'Nuova chat',
+          createdAt: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
+          updatedAt: data.updatedAt?.toMillis?.() || data.updatedAt?.seconds * 1000 || Date.now(),
+          pinned: data.pinned || false,
+          order: data.order || 0
+        });
+      });
+
+      // Sort: pinned first (desc), then by order (asc), then by updatedAt (desc)
+      loadedChats.sort((a, b) => {
+        if (a.pinned !== b.pinned) {
+          return b.pinned - a.pinned; // pinned first
+        }
+        if (a.pinned) {
+          return a.order - b.order; // pinned: order asc
+        }
+        return a.order - b.order; // unpinned: order asc
+      });
+
+      console.log('[Store] Loaded', loadedChats.length, 'chats from Firestore');
+      set({ chats: loadedChats, loading: false });
+      
+      return loadedChats;
+    } catch (error) {
+      console.error('[Store] Error loading chats:', error);
+      set({ firestoreError: error.message, loading: false });
+      return [];
+    }
+  },
+
+  /**
+   * Create a new chat
+   */
+  createNewChat: async () => {
+    const userId = getUserId();
+    
+    try {
+      console.log('[Store] Creating new chat...');
+      
+      // Get current chats to determine next order
+      const { chats } = get();
+      const maxOrder = chats.length > 0 
+        ? Math.max(...chats.map(c => c.order || 0))
+        : -1;
+      
+      const now = Date.now();
+      const chatData = {
+        title: 'Nuova chat',
+        createdAt: Timestamp.fromMillis(now),
+        updatedAt: Timestamp.fromMillis(now),
+        pinned: false,
+        order: maxOrder + 1
+      };
+
+      const chatsRef = getChatsRef(userId);
+      const docRef = await addDoc(chatsRef, chatData);
+      
+      const newChat = {
+        id: docRef.id,
+        ...chatData,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      // Add to local state
+      set(state => ({
+        chats: [...state.chats, newChat],
+        activeChatId: docRef.id,
+        sessionId: docRef.id // Update sessionId for backward compatibility
+      }));
+
+      // Update localStorage
+      localStorage.setItem('chat_session_id', docRef.id);
+      
+      console.log('[Store] New chat created:', docRef.id);
+      
+      // Load messages for new chat (will be empty)
+      await get().loadMessages();
+      
+      return docRef.id;
+    } catch (error) {
+      console.error('[Store] Error creating chat:', error);
+      set({ firestoreError: error.message });
+      throw error;
+    }
+  },
+
+  /**
+   * Rename a chat
+   */
+  renameChat: async (chatId, newTitle) => {
+    const userId = getUserId();
+    
+    try {
+      console.log('[Store] Renaming chat:', chatId, 'to:', newTitle);
+      
+      const chatRef = doc(db, 'users', userId, 'chats', chatId);
+      await updateDoc(chatRef, {
+        title: newTitle,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      set(state => ({
+        chats: state.chats.map(chat => 
+          chat.id === chatId 
+            ? { ...chat, title: newTitle, updatedAt: Date.now() }
+            : chat
+        )
+      }));
+
+      console.log('[Store] Chat renamed successfully');
+    } catch (error) {
+      console.error('[Store] Error renaming chat:', error);
+      set({ firestoreError: error.message });
+      throw error;
+    }
+  },
+
+  /**
+   * Delete a chat and all its messages
+   */
+  deleteChat: async (chatId) => {
+    const userId = getUserId();
+    
+    try {
+      console.log('[Store] Deleting chat:', chatId);
+      
+      // Delete all messages first
+      const messagesRef = getMessagesRef(chatId);
+      const messagesSnapshot = await getDocs(messagesRef);
+      
+      const batch = writeBatch(db);
+      messagesSnapshot.forEach((messageDoc) => {
+        batch.delete(messageDoc.ref);
+      });
+      await batch.commit();
+      
+      // Delete chat document
+      const chatRef = doc(db, 'users', userId, 'chats', chatId);
+      await deleteDoc(chatRef);
+
+      // Update local state
+      const { activeChatId } = get();
+      let newActiveChatId = activeChatId;
+      
+      // If deleted chat was active, select most recent available
+      if (activeChatId === chatId) {
+        const { chats } = get();
+        const remainingChats = chats.filter(c => c.id !== chatId);
+        if (remainingChats.length > 0) {
+          // Sort by updatedAt desc and pick first
+          remainingChats.sort((a, b) => b.updatedAt - a.updatedAt);
+          newActiveChatId = remainingChats[0].id;
+          localStorage.setItem('chat_session_id', newActiveChatId);
+        } else {
+          newActiveChatId = null;
+        }
+      }
+
+      set(state => ({
+        chats: state.chats.filter(chat => chat.id !== chatId),
+        activeChatId: newActiveChatId,
+        sessionId: newActiveChatId || state.sessionId,
+        messages: newActiveChatId === chatId ? [] : state.messages
+      }));
+
+      // Load messages for new active chat if changed
+      if (newActiveChatId && newActiveChatId !== activeChatId) {
+        await get().loadMessages();
+      } else if (!newActiveChatId) {
+        set({ messages: [] });
+      }
+
+      console.log('[Store] Chat deleted successfully');
+    } catch (error) {
+      console.error('[Store] Error deleting chat:', error);
+      set({ firestoreError: error.message });
+      throw error;
+    }
+  },
+
+  /**
+   * Toggle pin status (max 3 pinned)
+   */
+  togglePin: async (chatId) => {
+    const userId = getUserId();
+    
+    try {
+      const { chats } = get();
+      const chat = chats.find(c => c.id === chatId);
+      if (!chat) {
+        throw new Error('Chat not found');
+      }
+
+      const newPinned = !chat.pinned;
+      
+      // Check max 3 pinned limit
+      if (newPinned) {
+        const pinnedCount = chats.filter(c => c.pinned).length;
+        if (pinnedCount >= 3) {
+          throw new Error('Massimo 3 chat possono essere fissate');
+        }
+      }
+
+      console.log('[Store] Toggling pin for chat:', chatId, 'to:', newPinned);
+      
+      const chatRef = doc(db, 'users', userId, 'chats', chatId);
+      await updateDoc(chatRef, {
+        pinned: newPinned,
+        updatedAt: serverTimestamp()
+      });
+
+      // Update local state
+      set(state => ({
+        chats: state.chats.map(c => 
+          c.id === chatId 
+            ? { ...c, pinned: newPinned, updatedAt: Date.now() }
+            : c
+        )
+      }));
+
+      // Reload chats to maintain correct order
+      await get().loadChatsFromFirestore();
+      
+      console.log('[Store] Pin toggled successfully');
+    } catch (error) {
+      console.error('[Store] Error toggling pin:', error);
+      set({ firestoreError: error.message });
+      throw error;
+    }
+  },
+
+  /**
+   * Reorder chats (only unpinned)
+   */
+  reorderChats: async (newOrder) => {
+    const userId = getUserId();
+    
+    try {
+      console.log('[Store] Reordering chats:', newOrder);
+      
+      const batch = writeBatch(db);
+      
+      newOrder.forEach((chatId, index) => {
+        const chatRef = doc(db, 'users', userId, 'chats', chatId);
+        batch.update(chatRef, {
+          order: index,
+          updatedAt: serverTimestamp()
+        });
+      });
+
+      await batch.commit();
+
+      // Update local state
+      set(state => ({
+        chats: state.chats.map(chat => {
+          const newIndex = newOrder.indexOf(chat.id);
+          if (newIndex !== -1 && !chat.pinned) {
+            return { ...chat, order: newIndex, updatedAt: Date.now() };
+          }
+          return chat;
+        })
+      }));
+
+      console.log('[Store] Chats reordered successfully');
+    } catch (error) {
+      console.error('[Store] Error reordering chats:', error);
+      set({ firestoreError: error.message });
+      throw error;
+    }
+  },
+
+  /**
+   * Set active chat
+   */
+  setActiveChat: async (chatId) => {
+    try {
+      console.log('[Store] Setting active chat:', chatId);
+      
+      set({ 
+        activeChatId: chatId,
+        sessionId: chatId, // Update sessionId for backward compatibility
+        messages: [] // Clear messages, will be loaded
+      });
+
+      // Update localStorage
+      localStorage.setItem('chat_session_id', chatId);
+      
+      // Load messages for the new active chat
+      await get().loadMessages();
+      
+      console.log('[Store] Active chat set successfully');
+    } catch (error) {
+      console.error('[Store] Error setting active chat:', error);
+      set({ firestoreError: error.message });
+      throw error;
+    }
+  },
+
+  /**
+   * Load messages from Firestore
+   */
+  loadMessages: async () => {
+    const { activeChatId, sessionId } = get();
+    const chatId = activeChatId || sessionId;
+    
+    if (!chatId) {
+      console.log('[Store] No active chat, skipping message load');
+      return [];
+    }
+    
+    set({ loading: true, firestoreError: null });
+
+    try {
+      console.log('[Store] Loading messages for chat:', chatId);
+      const messagesRef = getMessagesRef(chatId);
       const q = query(messagesRef, orderBy('createdAt', 'asc'));
       
       const querySnapshot = await getDocs(q);
@@ -146,7 +507,13 @@ export const useChatStore = create((set, get) => ({
    * Setup realtime listener for messages
    */
   setupRealtimeListener: () => {
-    const { sessionId, unsubscribe } = get();
+    const { activeChatId, sessionId, unsubscribe } = get();
+    const chatId = activeChatId || sessionId;
+    
+    if (!chatId) {
+      console.log('[Store] No active chat, skipping realtime listener');
+      return;
+    }
     
     // Clean up existing listener
     if (unsubscribe) {
@@ -154,8 +521,8 @@ export const useChatStore = create((set, get) => ({
     }
 
     try {
-      console.log('[Store] Setting up realtime listener for session:', sessionId);
-      const messagesRef = getMessagesRef(sessionId);
+      console.log('[Store] Setting up realtime listener for chat:', chatId);
+      const messagesRef = getMessagesRef(chatId);
       const q = query(messagesRef, orderBy('createdAt', 'asc'));
       
       const unsubscribeListener = onSnapshot(
@@ -258,10 +625,16 @@ export const useChatStore = create((set, get) => ({
    * Images are stored only in local cache (Zustand state)
    */
   saveMessageWithoutImageToFirestore: async (role, text, model = DEFAULT_MODEL) => {
-    const { sessionId } = get();
+    const { activeChatId, sessionId } = get();
+    const chatId = activeChatId || sessionId;
+    
+    if (!chatId) {
+      console.warn('[Store] No active chat, cannot save message');
+      return null;
+    }
     
     try {
-      const messagesRef = getMessagesRef(sessionId);
+      const messagesRef = getMessagesRef(chatId);
       
       // Build message data for text messages only
       const messageData = {
@@ -521,7 +894,15 @@ export const useChatStore = create((set, get) => ({
    * Send a message using automatic model routing
    */
   sendMessage: async (message) => {
-    const { sessionId, selectedModel } = get();
+    const { activeChatId, sessionId, selectedModel } = get();
+    const chatId = activeChatId || sessionId;
+    
+    // If no active chat, create one
+    if (!chatId) {
+      console.log('[Store] No active chat, creating new chat...');
+      const newChatId = await get().createNewChat();
+      set({ activeChatId: newChatId, sessionId: newChatId });
+    }
     
     try {
       // Resolve model configuration (endpoint, type, googleModel)
@@ -628,24 +1009,24 @@ export const useChatStore = create((set, get) => ({
   /**
    * Clear all messages and create new session
    */
-  clearMessages: () => {
+  clearMessages: async () => {
     const { unsubscribe } = get();
     if (unsubscribe) {
       unsubscribe();
     }
     
-    // Create new session
-    const newSessionId = uuidv4();
-    localStorage.setItem('chat_session_id', newSessionId);
+    // Create new chat
+    const newChatId = await get().createNewChat();
     
     set({ 
       messages: [], 
-      sessionId: newSessionId,
+      sessionId: newChatId,
+      activeChatId: newChatId,
       unsubscribe: null,
       firestoreError: null
     });
     
-    console.log('[Store] New session created:', newSessionId);
+    console.log('[Store] New chat created:', newChatId);
   }
 }));
 

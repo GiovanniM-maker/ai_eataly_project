@@ -17,10 +17,19 @@ const ChatUI = () => {
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // Load messages on mount
+  const { activeChatId, loadChatsFromFirestore } = useChatStore();
+
+  // Load chats and messages on mount
   useEffect(() => {
-    loadMessages();
-  }, [loadMessages]);
+    loadChatsFromFirestore();
+  }, [loadChatsFromFirestore]);
+
+  // Load messages when active chat changes
+  useEffect(() => {
+    if (activeChatId) {
+      loadMessages();
+    }
+  }, [activeChatId, loadMessages]);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -115,7 +124,7 @@ const ChatUI = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 text-white">
+    <div className="flex flex-col flex-1 h-screen bg-gray-950 text-white">
       {/* Header */}
       <div className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">AI Chat</h1>
