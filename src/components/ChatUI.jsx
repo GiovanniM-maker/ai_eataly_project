@@ -17,7 +17,12 @@ const ChatUI = () => {
     loading, 
     selectedModel,
     loadModelConfig,
-    buildModelSettings
+    buildModelSettings,
+    updateMessage,
+    regenerateMessage,
+    editUserMessage,
+    stopGeneration,
+    isGenerating
   } = useChatStore();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -26,6 +31,10 @@ const ChatUI = () => {
   // Pending composer state (like ChatGPT)
   const [pendingImages, setPendingImages] = useState([]); // Array of { file: File, base64: string }
   const [showModelSettings, setShowModelSettings] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState(null);
+  const [editedText, setEditedText] = useState('');
+  const [snackbar, setSnackbar] = useState(null);
+  const [hoveredMessageId, setHoveredMessageId] = useState(null);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -169,6 +178,74 @@ const ChatUI = () => {
     }
   };
 
+  /**
+   * Copy message to clipboard
+   */
+  const copyToClipboard = async (text) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setSnackbar('Copiato!');
+      setTimeout(() => setSnackbar(null), 2000);
+    } catch (err) {
+      console.error('Clipboard error', err);
+      setSnackbar('Errore durante la copia');
+      setTimeout(() => setSnackbar(null), 2000);
+    }
+  };
+
+  /**
+   * Handle regenerate response
+   */
+  const handleRegenerate = async (messageId) => {
+    try {
+      setIsLoading(true);
+      await regenerateMessage(messageId);
+    } catch (error) {
+      console.error('Error regenerating message:', error);
+      setError(error.message || 'Errore durante la rigenerazione');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Handle edit user message
+   */
+  const handleEditMessage = (messageId, currentText) => {
+    setEditingMessageId(messageId);
+    setEditedText(currentText);
+  };
+
+  /**
+   * Save edited message
+   */
+  const handleSaveEdit = async (messageId) => {
+    if (!editedText.trim()) {
+      setEditingMessageId(null);
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      await editUserMessage(messageId, editedText.trim());
+      setEditingMessageId(null);
+      setEditedText('');
+    } catch (error) {
+      console.error('Error editing message:', error);
+      setError(error.message || 'Errore durante la modifica');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * Cancel edit
+   */
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditedText('');
+  };
+
   return (
     <div className="flex flex-col flex-1 h-screen bg-gray-950 text-white">
       {/* Header */}
@@ -207,15 +284,65 @@ const ChatUI = () => {
             messages.map((message) => (
               <div
                 key={message.id || `msg-${message.timestamp}`}
-                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'} group`}
+                onMouseEnter={() => setHoveredMessageId(message.id)}
+                onMouseLeave={() => setHoveredMessageId(null)}
               >
                 <div
-                  className={`max-w-[80%] rounded-lg px-4 py-3 ${
+                  className={`max-w-[80%] rounded-lg px-4 py-3 relative ${
                     message.role === 'user'
                       ? 'bg-blue-600 text-white'
                       : 'bg-gray-800 text-gray-100'
                   }`}
                 >
+                  {/* Message Actions Bar (visible on hover) */}
+                  {hoveredMessageId === message.id && (
+                    <div className="absolute -top-8 right-0 flex gap-1 bg-gray-900 rounded-lg px-2 py-1 border border-gray-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* Copy Button (all messages) */}
+                      {(message.content || message.base64) && (
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(message.content || '')}
+                          className="p-1.5 hover:bg-gray-700 rounded transition-colors"
+                          title="Copia"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                        </button>
+                      )}
+                      
+                      {/* Edit Button (user messages only) */}
+                      {message.role === 'user' && message.content && (
+                        <button
+                          type="button"
+                          onClick={() => handleEditMessage(message.id, message.content)}
+                          className="p-1.5 hover:bg-gray-700 rounded transition-colors"
+                          title="Modifica"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                      )}
+                      
+                      {/* Regenerate Button (assistant messages only) */}
+                      {message.role === 'assistant' && (
+                        <button
+                          type="button"
+                          onClick={() => handleRegenerate(message.id)}
+                          disabled={isLoading || isGenerating}
+                          className="p-1.5 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Rigenera risposta"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {/* Model label (if different from selected) */}
                   {message.model && message.model !== selectedModel && (
                     <div className="mb-2">
@@ -224,10 +351,40 @@ const ChatUI = () => {
                       </span>
                     </div>
                   )}
-                  {/* Text content */}
+                  
+                  {/* Text content (editable if editing) */}
                   {message.content && (
-                    <p className="whitespace-pre-wrap mb-2">{message.content}</p>
+                    editingMessageId === message.id ? (
+                      <div className="mb-2">
+                        <textarea
+                          value={editedText}
+                          onChange={(e) => setEditedText(e.target.value)}
+                          className="w-full bg-gray-700 text-white rounded px-2 py-1 resize-none min-h-[60px]"
+                          rows={3}
+                          autoFocus
+                        />
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEdit(message.id)}
+                            className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded text-sm"
+                          >
+                            Aggiorna
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelEdit}
+                            className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white rounded text-sm"
+                          >
+                            Annulla
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="whitespace-pre-wrap mb-2">{message.content}</p>
+                    )
                   )}
+                  
                   {/* Image messages: type === "image" with base64 */}
                   {message.type === 'image' && message.base64 && (
                     <img
@@ -245,14 +402,34 @@ const ChatUI = () => {
           )}
           {isLoading && (
             <div className="flex justify-start">
-              <div className="bg-gray-800 rounded-lg px-4 py-3">
+              <div className="bg-gray-800 rounded-lg px-4 py-3 relative">
                 <p className="text-gray-400">Thinking...</p>
+                {/* Stop Generation Button */}
+                {isGenerating && (
+                  <button
+                    type="button"
+                    onClick={stopGeneration}
+                    className="absolute -top-8 right-0 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M6 6h12v12H6z" />
+                    </svg>
+                    Stop
+                  </button>
+                )}
               </div>
             </div>
           )}
           <div ref={messagesEndRef} />
         </div>
       </div>
+
+      {/* Snackbar for feedback */}
+      {snackbar && (
+        <div className="fixed bottom-20 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-4 py-2 rounded-lg shadow-lg z-50">
+          {snackbar}
+        </div>
+      )}
 
       {/* Input Area */}
       <div className="border-t border-gray-800 bg-gray-900 p-4">

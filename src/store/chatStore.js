@@ -1096,18 +1096,79 @@ export const useChatStore = create((set, get) => ({
         const modelSettings = get().buildModelSettings(selectedModel);
         const { debugMode } = get();
         
-        const response = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            message: message,
-            model: config.googleModel,
-            ...(modelSettings && { modelSettings }),
-            debugMode: debugMode
-          }),
-        });
+        // Create abort controller for stopping generation
+        const controller = new AbortController();
+        get().setAbortController(controller);
+        get().setIsGenerating(true);
+        
+        try {
+          const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              message: message,
+              model: config.googleModel,
+              ...(modelSettings && { modelSettings }),
+              debugMode: debugMode
+            }),
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            let errorData;
+            try {
+              errorData = JSON.parse(errorText);
+            } catch {
+              errorData = { error: errorText || `HTTP ${response.status}` };
+            }
+            throw new Error(errorData.error || errorData.message || `API error: ${response.status}`);
+          }
+
+          const data = await response.json();
+          console.log('[Store] API response received:', data);
+
+          // Add assistant message to UI
+          const assistantMessage = {
+            id: `temp-${Date.now() + 1}`,
+            role: 'assistant',
+            content: data.reply || 'No response generated',
+            model: selectedModel,
+            messageType: 'text',
+            timestamp: Date.now()
+          };
+
+          set(state => ({
+            messages: [...state.messages, assistantMessage]
+          }));
+
+          // Save assistant message to Firestore (TEXT ONLY)
+          try {
+            await get().saveMessageWithoutImageToFirestore('assistant', data.reply || 'No response generated', selectedModel);
+            console.log('[Store] Text message saved to Firestore successfully');
+          } catch (firestoreError) {
+            console.warn('[Store] Firestore save failed for assistant message:', firestoreError);
+          }
+
+          get().setIsGenerating(false);
+          get().setAbortController(null);
+          return data.reply;
+        } catch (error) {
+          get().setIsGenerating(false);
+          get().setAbortController(null);
+          
+          if (error.name === 'AbortError') {
+            console.log('[Store] Generation aborted by user');
+            // Remove the last assistant message if it was being generated
+            set(state => ({
+              messages: state.messages.filter(msg => msg.role !== 'assistant' || msg.id !== `temp-${Date.now() + 1}`)
+            }));
+            return null;
+          }
+          throw error;
+        }
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -1176,6 +1237,142 @@ export const useChatStore = create((set, get) => ({
       });
     
     console.log('[Store] New chat created:', newChatId);
+  },
+
+  /**
+   * Message Actions
+   */
+  abortController: null, // For stopping generation
+  isGenerating: false, // Generation state
+
+  /**
+   * Update a message in the messages array
+   */
+  updateMessage: (messageId, updates) => {
+    set(state => ({
+      messages: state.messages.map(msg => 
+        msg.id === messageId ? { ...msg, ...updates } : msg
+      )
+    }));
+  },
+
+  /**
+   * Get previous user message before a given message
+   */
+  getPreviousUserMessage: (messageId) => {
+    const { messages } = get();
+    const messageIndex = messages.findIndex(msg => msg.id === messageId);
+    if (messageIndex === -1) return null;
+    
+    // Find the last user message before this message
+    for (let i = messageIndex - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        return messages[i];
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Regenerate response for a message
+   */
+  regenerateMessage: async (messageId) => {
+    const { messages, selectedModel } = get();
+    const message = messages.find(msg => msg.id === messageId);
+    
+    if (!message || message.role !== 'assistant') {
+      console.error('[Store] Cannot regenerate: message not found or not assistant message');
+      return;
+    }
+
+    // Find the previous user message
+    const userMessage = get().getPreviousUserMessage(messageId);
+    if (!userMessage) {
+      console.error('[Store] Cannot regenerate: no previous user message found');
+      return;
+    }
+
+    console.log('[Store] Regenerating response for message:', messageId);
+    
+    // Remove the old assistant message
+    set(state => ({
+      messages: state.messages.filter(msg => msg.id !== messageId)
+    }));
+
+    // Resend the user message to get a new response
+    try {
+      await get().sendMessage(userMessage.content);
+    } catch (error) {
+      console.error('[Store] Error regenerating message:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Edit user message and regenerate response
+   */
+  editUserMessage: async (messageId, newText) => {
+    const { messages } = get();
+    const message = messages.find(msg => msg.id === messageId);
+    
+    if (!message || message.role !== 'user') {
+      console.error('[Store] Cannot edit: message not found or not user message');
+      return;
+    }
+
+    console.log('[Store] Editing user message:', messageId);
+    
+    // Update the user message text
+    get().updateMessage(messageId, { content: newText });
+    
+    // Find and remove all assistant messages after this user message
+    const messageIndex = messages.findIndex(msg => msg.id === messageId);
+    const messagesToKeep = messages.slice(0, messageIndex + 1);
+    const messagesToRemove = messages.slice(messageIndex + 1);
+    
+    set({ messages: messagesToKeep });
+    
+    // Save updated user message to Firestore
+    try {
+      const { selectedModel } = get();
+      await get().saveMessageWithoutImageToFirestore('user', newText, selectedModel);
+    } catch (error) {
+      console.warn('[Store] Failed to save edited message to Firestore:', error);
+    }
+
+    // Regenerate response with new text
+    try {
+      await get().sendMessage(newText);
+    } catch (error) {
+      console.error('[Store] Error regenerating after edit:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Set abort controller for stopping generation
+   */
+  setAbortController: (controller) => {
+    set({ abortController: controller });
+  },
+
+  /**
+   * Stop generation
+   */
+  stopGeneration: () => {
+    const { abortController } = get();
+    if (abortController) {
+      console.log('[Store] Stopping generation...');
+      abortController.abort();
+      set({ abortController: null, isGenerating: false });
+    }
+  },
+
+  /**
+   * Set generation state
+   */
+  setIsGenerating: (generating) => {
+    set({ isGenerating: generating });
   },
 
   /**
