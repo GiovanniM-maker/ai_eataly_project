@@ -12,8 +12,8 @@ const ChatUI = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [firestoreStatus, setFirestoreStatus] = useState(null);
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  // Pending composer state (like ChatGPT)
+  const [pendingImages, setPendingImages] = useState([]); // Array of { file: File, base64: string }
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
 
@@ -38,15 +38,30 @@ const ChatUI = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    // Don't send if nothing to send
+    if ((!input.trim() && pendingImages.length === 0) || isLoading) return;
 
-    const message = input.trim();
+    const text = input.trim();
+    const images = [...pendingImages];
+    
+    // Clear composer state
     setInput('');
+    setPendingImages([]);
     setIsLoading(true);
     setError(null);
 
     try {
-      await sendMessage(message);
+      // If there are images, send them first
+      if (images.length > 0) {
+        for (const img of images) {
+          await sendImageMessage(img.file);
+        }
+      }
+      
+      // If there's text, send it
+      if (text) {
+        await sendMessage(text);
+      }
     } catch (error) {
       console.error('Error sending message:', error);
       setError(error.message || 'Failed to send message');
@@ -81,45 +96,61 @@ const ChatUI = () => {
     setTimeout(() => setFirestoreStatus(null), 3000);
   };
 
-  const handleImageSelect = (e) => {
-    const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      setSelectedImage(file);
-      const previewUrl = URL.createObjectURL(file);
-      setImagePreview(previewUrl);
+  /**
+   * Add image to pending queue
+   */
+  const handleImageSelect = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const newImages = [];
+    
+    for (const file of files) {
+      if (file.type.startsWith('image/')) {
+        // Convert to base64
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        
+        newImages.push({ file, base64 });
+      }
     }
+    
+    if (newImages.length > 0) {
+      setPendingImages(prev => [...prev, ...newImages]);
+    }
+    
     // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
   };
 
-  const handleSendImage = async () => {
-    if (!selectedImage || isLoading) return;
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      await sendImageMessage(selectedImage);
-      setSelectedImage(null);
-      if (imagePreview) {
-        URL.revokeObjectURL(imagePreview);
-        setImagePreview(null);
+  /**
+   * Remove image from pending queue
+   */
+  const handleRemoveImage = (index) => {
+    setPendingImages(prev => {
+      const newImages = [...prev];
+      // Revoke object URL if it exists
+      if (newImages[index]?.base64?.startsWith('blob:')) {
+        URL.revokeObjectURL(newImages[index].base64);
       }
-    } catch (error) {
-      console.error('Error sending image:', error);
-      setError(error.message || 'Failed to send image');
-    } finally {
-      setIsLoading(false);
-    }
+      newImages.splice(index, 1);
+      return newImages;
+    });
   };
 
-  const handleRemoveImage = () => {
-    setSelectedImage(null);
-    if (imagePreview) {
-      URL.revokeObjectURL(imagePreview);
-      setImagePreview(null);
+  /**
+   * Handle Enter key (send) or Shift+Enter (new line)
+   */
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
     }
   };
 
@@ -232,63 +263,68 @@ const ChatUI = () => {
               Test Write
             </button>
           </div>
-          {/* Image Preview */}
-          {imagePreview && (
-            <div className="mb-3 relative inline-block">
-              <img
-                src={imagePreview}
-                alt="Preview"
-                className="max-w-[240px] rounded-lg border border-gray-700"
-              />
-              <button
-                type="button"
-                onClick={handleRemoveImage}
-                className="absolute -top-2 -right-2 bg-red-600 hover:bg-red-700 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs"
-              >
-                ×
-              </button>
+          {/* Image Preview Bubble (above textarea) */}
+          {pendingImages.length > 0 && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {pendingImages.map((img, index) => (
+                <div key={index} className="relative inline-block">
+                  <img
+                    src={img.base64}
+                    alt={`Preview ${index + 1}`}
+                    className="h-20 w-20 rounded-lg object-cover border border-gray-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveImage(index)}
+                    className="absolute -top-2 -right-2 bg-red-600 hover:bg-red-700 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs font-bold transition-colors"
+                    title="Remove image"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
             </div>
           )}
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-end">
             <input
               ref={fileInputRef}
               type="file"
               accept="image/*"
               onChange={handleImageSelect}
+              multiple
               className="hidden"
               id="image-upload"
             />
             <label
               htmlFor="image-upload"
-              className="px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg cursor-pointer transition-colors flex items-center"
+              className="px-4 py-3 bg-gray-700 hover:bg-gray-600 text-white rounded-lg cursor-pointer transition-colors flex items-center flex-shrink-0"
+              title="Attach image"
             >
-              <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
               </svg>
-              Image
             </label>
-            {selectedImage && (
-              <button
-                type="button"
-                onClick={handleSendImage}
-                disabled={isLoading}
-                className="px-4 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
-              >
-                Send Image
-              </button>
-            )}
-            <input
-              type="text"
+            <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message..."
+              onKeyDown={handleKeyDown}
+              placeholder="Type a message... (Enter to send, Shift+Enter for new line)"
               disabled={isLoading}
-              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows={1}
+              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none min-h-[48px] max-h-[200px] overflow-y-auto"
+              style={{ 
+                height: 'auto',
+                minHeight: '48px'
+              }}
+              onInput={(e) => {
+                e.target.style.height = 'auto';
+                e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+              }}
             />
             <button
               type="submit"
-              disabled={!input.trim() || isLoading}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg transition-all font-medium"
+              disabled={(input.trim().length === 0 && pendingImages.length === 0) || isLoading}
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg transition-all font-medium flex-shrink-0"
             >
               {isLoading ? 'Sending...' : 'Send'}
             </button>
