@@ -103,7 +103,7 @@ export const useChatStore = create((set, get) => ({
             content: data.text || '',
             imageUrl: data.imageUrl || null, // Legacy support
             timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-            model: data.model || 'gemini-2.5-flash'
+            model: data.model || DEFAULT_MODEL
           });
         }
       });
