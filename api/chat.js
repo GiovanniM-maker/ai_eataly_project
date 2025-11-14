@@ -1,5 +1,6 @@
 import { createSign } from 'crypto';
 import { loadModelConfig } from './helpers/firestoreConfig.js';
+import { loadPipelineConfig } from './helpers/pipelineConfig.js';
 
 // CORS allowed origins
 const ALLOWED_ORIGINS = [
@@ -112,9 +113,9 @@ const getAccessToken = async () => {
 
 /**
  * Call Google Gemini API (REST API v1)
- * ONLY for gemini-2.5-flash (text model)
+ * Generic function that can be used for both pre-model and main model
  */
-const callGeminiAPI = async (model, message, modelConfig = null, modelSettings = null, debugMode = false) => {
+const callModelAPI = async (model, message, modelConfig = null, modelSettings = null, debugMode = false) => {
   const accessToken = await getAccessToken();
   
   // Gemini 2.x models use v1 API

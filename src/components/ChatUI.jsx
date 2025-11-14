@@ -31,6 +31,7 @@ const ChatUI = () => {
   // Pending composer state (like ChatGPT)
   const [pendingImages, setPendingImages] = useState([]); // Array of { file: File, base64: string }
   const [showModelSettings, setShowModelSettings] = useState(false);
+  const [showPipelineConfig, setShowPipelineConfig] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState(null);
   const [editedText, setEditedText] = useState('');
   const [snackbar, setSnackbar] = useState(null);
@@ -263,11 +264,23 @@ const ChatUI = () => {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
+          <button
+            onClick={() => setShowPipelineConfig(true)}
+            className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm"
+            title="Il modello prima"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+          </button>
         </div>
       </div>
 
       {/* Model Settings Modal */}
       <ModelSettings isOpen={showModelSettings} onClose={() => setShowModelSettings(false)} />
+      
+      {/* Pipeline Config Modal */}
+      <PipelineConfig isOpen={showPipelineConfig} onClose={() => setShowPipelineConfig(false)} />
 
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto px-6 py-6">
@@ -343,8 +356,20 @@ const ChatUI = () => {
                     </div>
                   )}
 
+                  {/* Pre-processed badge */}
+                  {message.preprocessedBy && (
+                    <div className="mb-2">
+                      <span className="inline-flex items-center gap-1 px-2 py-1 bg-purple-900/50 border border-purple-700 rounded text-xs text-purple-200">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Pre-processato da {getModelDisplayName(message.preprocessedBy)}
+                      </span>
+                    </div>
+                  )}
+                  
                   {/* Model label (if different from selected) */}
-                  {message.model && message.model !== selectedModel && (
+                  {message.model && message.model !== selectedModel && !message.preprocessedBy && (
                     <div className="mb-2">
                       <span className="text-xs opacity-70 italic">
                         Model: {getModelDisplayName(message.model)}

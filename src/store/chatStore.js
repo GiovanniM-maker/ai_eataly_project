@@ -1127,18 +1127,19 @@ export const useChatStore = create((set, get) => ({
             throw new Error(errorData.error || errorData.message || `API error: ${response.status}`);
           }
 
-          const data = await response.json();
-          console.log('[Store] API response received:', data);
+        const data = await response.json();
+        console.log('[Store] API response received:', data);
 
-          // Add assistant message to UI
-          const assistantMessage = {
-            id: `temp-${Date.now() + 1}`,
-            role: 'assistant',
-            content: data.reply || 'No response generated',
-            model: selectedModel,
-            messageType: 'text',
-            timestamp: Date.now()
-          };
+        // Add assistant message to UI
+        const assistantMessage = {
+          id: `temp-${Date.now() + 1}`,
+          role: 'assistant',
+          content: data.reply || 'No response generated',
+          model: selectedModel,
+          messageType: 'text',
+          timestamp: Date.now(),
+          preprocessedBy: data.preprocessedBy || null // Track if pre-processed
+        };
 
           set(state => ({
             messages: [...state.messages, assistantMessage]
@@ -1551,6 +1552,99 @@ export const useChatStore = create((set, get) => ({
     } catch (error) {
       console.error('[Store] Error loading all model configs:', error);
       return {};
+    }
+  },
+
+  /**
+   * Pipeline Configuration Management
+   */
+  pipelineConfig: null, // Cache for pipeline config
+
+  /**
+   * Load pipeline configuration from Firestore
+   */
+  loadPipelineConfig: async () => {
+    try {
+      // Check cache first
+      const { pipelineConfig } = get();
+      if (pipelineConfig) {
+        return pipelineConfig;
+      }
+
+      console.log('[Store] Loading pipeline config');
+      const configRef = doc(db, 'configs', 'modelPipeline');
+      const configSnap = await getDoc(configRef);
+
+      if (configSnap.exists()) {
+        const data = configSnap.data();
+        const config = {
+          enabled: data.enabled || false,
+          preModel: data.preModel || null,
+          instructions: data.instructions || '',
+          extraPrompt: data.extraPrompt || '',
+          temperature: data.temperature ?? 0.4,
+          topP: data.topP ?? 0.9
+        };
+        
+        // Update cache
+        set({ pipelineConfig: config });
+        return config;
+      } else {
+        // Create default config
+        const defaultConfig = {
+          enabled: false,
+          preModel: null,
+          instructions: '',
+          extraPrompt: '',
+          temperature: 0.4,
+          topP: 0.9
+        };
+        
+        // Save default to Firestore
+        await setDoc(configRef, defaultConfig);
+        
+        // Update cache
+        set({ pipelineConfig: defaultConfig });
+        return defaultConfig;
+      }
+    } catch (error) {
+      console.error('[Store] Error loading pipeline config:', error);
+      // Return default config on error
+      return {
+        enabled: false,
+        preModel: null,
+        instructions: '',
+        extraPrompt: '',
+        temperature: 0.4,
+        topP: 0.9
+      };
+    }
+  },
+
+  /**
+   * Save pipeline configuration to Firestore
+   */
+  savePipelineConfig: async (config) => {
+    try {
+      console.log('[Store] Saving pipeline config');
+      const configRef = doc(db, 'configs', 'modelPipeline');
+      
+      const configData = {
+        ...config,
+        updatedAt: Date.now()
+      };
+      
+      await setDoc(configRef, configData, { merge: true });
+      
+      // Update cache
+      set({ pipelineConfig: configData });
+      
+      console.log('[Store] Pipeline config saved successfully');
+      return true;
+    } catch (error) {
+      console.error('[Store] Error saving pipeline config:', error);
+      set({ firestoreError: error.message });
+      throw error;
     }
   }
 }));
