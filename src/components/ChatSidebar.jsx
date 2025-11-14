@@ -1,3 +1,7 @@
+// [DEBUG] chats come from: useChatStore().chats
+// [DEBUG] currentChatId comes from: useChatStore().currentChatId
+// [DEBUG] selectChat is called here: onSelect handler in ChatItem
+
 import { useState, useEffect } from 'react';
 import { useChatStore } from '../store/chatStore';
 import {
@@ -33,7 +37,8 @@ const ChatSidebar = () => {
     renameChat,
     deleteChat,
     pinChat,
-    reorderChat,
+    moveChat,
+    reorderChat, // Keep for drag & drop
   } = useChatStore();
 
   const [editingChatId, setEditingChatId] = useState(null);
@@ -82,6 +87,7 @@ const ChatSidebar = () => {
   };
 
   const handleRename = async (chatId, currentTitle) => {
+    console.log('[SIDEBAR] Rename', chatId, editTitle.trim());
     if (editTitle.trim() && editTitle !== currentTitle) {
       try {
         await renameChat(chatId, editTitle.trim());
@@ -94,6 +100,7 @@ const ChatSidebar = () => {
   };
 
   const handleDelete = async (chatId) => {
+    console.log('[SIDEBAR] Delete', chatId);
     if (window.confirm('Sei sicuro di voler eliminare questa chat?')) {
       try {
         await deleteChat(chatId);
@@ -106,6 +113,7 @@ const ChatSidebar = () => {
   };
 
   const handleTogglePin = async (chatId) => {
+    console.log('[SIDEBAR] Pin/Unpin', chatId);
     try {
       await pinChat(chatId);
     } catch (error) {
@@ -116,8 +124,9 @@ const ChatSidebar = () => {
   };
 
   const handleMoveUp = async (chatId) => {
+    console.log('[SIDEBAR] Move up', chatId);
     try {
-      await reorderChat(chatId, 'up');
+      await moveChat(chatId, 'up');
     } catch (error) {
       console.error('Error moving chat up:', error);
     }
@@ -125,8 +134,9 @@ const ChatSidebar = () => {
   };
 
   const handleMoveDown = async (chatId) => {
+    console.log('[SIDEBAR] Move down', chatId);
     try {
-      await reorderChat(chatId, 'down');
+      await moveChat(chatId, 'down');
     } catch (error) {
       console.error('Error moving chat down:', error);
     }
@@ -201,7 +211,10 @@ const ChatSidebar = () => {
                     key={chat.id}
                     chat={chat}
                     isActive={chat.id === chatIdToUse}
-                    onSelect={() => selectChat(chat.id)}
+                    onSelect={() => {
+                      console.log('[SIDEBAR] Click chat ->', chat.id);
+                      selectChat(chat.id);
+                    }}
                   onRename={(title) => {
                     setEditingChatId(chat.id);
                     setEditTitle(title);
@@ -219,7 +232,7 @@ const ChatSidebar = () => {
                   menuOpen={menuOpenId === chat.id}
                   onMenuToggle={() => {
                     const newMenuId = menuOpenId === chat.id ? null : chat.id;
-                    console.log('OPEN MENU →', newMenuId);
+                    console.log('[SIDEBAR] Open menu ->', newMenuId);
                     setMenuOpenId(newMenuId);
                   }}
                   isPinned={true}
@@ -253,7 +266,10 @@ const ChatSidebar = () => {
                     key={chat.id}
                     chat={chat}
                     isActive={chat.id === chatIdToUse}
-                    onSelect={() => selectChat(chat.id)}
+                    onSelect={() => {
+                      console.log('[SIDEBAR] Click chat ->', chat.id);
+                      selectChat(chat.id);
+                    }}
                   onRename={(title) => {
                     setEditingChatId(chat.id);
                     setEditTitle(title);
@@ -299,6 +315,7 @@ const ChatSidebar = () => {
 
 /**
  * Sortable Chat Item (for drag & drop)
+ * NOTE: Drag listeners are only on the drag handle, not the whole row
  */
 const SortableChatItem = (props) => {
   const {
@@ -316,8 +333,10 @@ const SortableChatItem = (props) => {
     opacity: isDragging ? 0.5 : 1,
   };
 
+  // Don't apply drag listeners to the whole item - only allow dragging from a handle
+  // This prevents interference with click handlers
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <div ref={setNodeRef} style={style} {...attributes}>
       <ChatItem {...props} />
     </div>
   );
@@ -360,7 +379,12 @@ const ChatItem = ({
           ? 'bg-gray-800 text-white'
           : 'hover:bg-gray-800/50 text-gray-300'
       }`}
-      onClick={!isEditing ? onSelect : undefined}
+      onClick={(e) => {
+        if (!isEditing && onSelect) {
+          e.stopPropagation();
+          onSelect();
+        }
+      }}
     >
       {isPinned && (
         <svg className="w-4 h-4 text-yellow-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">

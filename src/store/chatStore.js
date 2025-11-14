@@ -1,3 +1,7 @@
+// [DEBUG] chats array is defined here: line 84
+// [DEBUG] currentChatId is managed here: line 83 (synced with activeChatId)
+// [DEBUG] messages are loaded based on chatId here: loadMessages() at line 484
+
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { 
@@ -428,7 +432,7 @@ export const useChatStore = create((set, get) => ({
    * Select chat (alias for setActiveChat with debug log)
    */
   selectChat: async (chatId) => {
-    console.log('SELECT CHAT →', chatId);
+    console.log('[STORE] selectChat ->', chatId);
     await get().setActiveChat(chatId);
   },
 
@@ -446,6 +450,14 @@ export const useChatStore = create((set, get) => ({
   pinChat: async (chatId) => {
     console.log('PIN/UNPIN →', chatId);
     await get().togglePin(chatId);
+  },
+
+  /**
+   * Move chat (move up or down) - alias for reorderChat
+   */
+  moveChat: async (chatId, direction) => {
+    console.log('[STORE] moveChat', chatId, direction);
+    await get().reorderChat(chatId, direction);
   },
 
   /**
