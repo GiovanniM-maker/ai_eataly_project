@@ -432,60 +432,33 @@ export const useChatStore = create((set, get) => ({
         throw new Error('No image data in API response');
       }
 
-      // Create data URL for immediate display
+      // Create data URL for immediate display: "data:image/png;base64,..."
       const imageDataUrl = `data:image/png;base64,${imageBase64}`;
+      
+      console.log('[Store] Image extracted from API response');
+      console.log('[Store] Final base64 length:', imageBase64.length, 'characters');
 
-      // Add assistant message with base64 image (temporary)
+      // Add assistant message with base64 image
       const assistantMessage = {
         id: tempMessageId,
         type: 'image',
         role: 'assistant',
         sender: 'assistant',
         model: modelToUse,
-        imageBase64: imageBase64, // Temporary, will be replaced with URL
-        imageUrl: imageDataUrl, // Data URL for immediate display
+        base64: imageDataUrl, // Store as data URL for display
         timestamp: Date.now()
       };
-      
-      console.log('[Store] Image extracted, length:', imageBase64.length);
 
       set(state => ({
         messages: [...state.messages, assistantMessage]
       }));
 
-      // Process and compress generated image before upload
-      console.log('[Store] Processing generated image (resize & compress)...');
-      
-      // Convert base64 to Blob for processing
-      const base64Response = await fetch(`data:image/png;base64,${imageBase64}`);
-      const blob = await base64Response.blob();
-      const file = new File([blob], 'generated-image.png', { type: 'image/png' });
-      
-      const processed = await processImage(file, 1500);
-      console.log('[IMG] Generated image - Original:', `${(blob.size / 1024).toFixed(2)} KB`, 'Compressed:', `${(processed.compressedSize / 1024).toFixed(2)} KB`);
-      
-      // Convert processed blob to File for upload
-      const compressedFile = new File([processed.blob], 'generated-image.jpg', {
-        type: 'image/jpeg',
-        lastModified: Date.now()
-      });
-      
-      // Upload compressed file to PostImages.org
-      console.log('[Store] Uploading compressed generated image to PostImages.org...');
-      const imageUrl = await get().uploadImageToPostImages(compressedFile);
+      console.log('[Store] Image message added to UI, rendering from base64');
 
-      // Update message with imageUrl and remove imageBase64
-      set(state => ({
-        messages: state.messages.map(msg => 
-          msg.id === tempMessageId
-            ? { ...msg, url: imageUrl, imageBase64: null }
-            : msg
-        )
-      }));
-
-      // Save to Firestore with new structure (type: "image", url, sender)
+      // Save to Firestore with base64 (data URL format)
       try {
-        await get().saveMessageToFirestore('assistant', '', modelToUse, imageUrl);
+        await get().saveMessageToFirestore('assistant', '', modelToUse, imageDataUrl, 'image');
+        console.log('[Store] Image message saved to Firestore successfully with base64');
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for generated image:', firestoreError);
         // Remove message from UI if Firestore save fails
@@ -495,8 +468,8 @@ export const useChatStore = create((set, get) => ({
         throw new Error('Failed to save generated image to Firestore');
       }
 
-      console.log('[Store] Generated image uploaded and saved successfully');
-      return imageUrl;
+      console.log('[Store] Generated image saved successfully (base64 only, no external upload)');
+      return imageDataUrl;
     } catch (error) {
       console.error('[Store] Error generating image:', error);
       // Remove message from UI on error
@@ -559,60 +532,33 @@ export const useChatStore = create((set, get) => ({
         throw new Error('No image data in API response');
       }
 
-      // Create data URL for immediate display
+      // Create data URL for immediate display: "data:image/png;base64,..."
       const imageDataUrl = `data:image/png;base64,${imageBase64}`;
+      
+      console.log('[Store] Image extracted from API response');
+      console.log('[Store] Final base64 length:', imageBase64.length, 'characters');
 
-      // Add assistant message with base64 image (temporary)
+      // Add assistant message with base64 image
       const assistantMessage = {
         id: tempMessageId,
         type: 'image',
         role: 'assistant',
         sender: 'assistant',
         model: modelToUse,
-        imageBase64: imageBase64, // Temporary, will be replaced with URL
-        imageUrl: imageDataUrl, // Data URL for immediate display
+        base64: imageDataUrl, // Store as data URL for display
         timestamp: Date.now()
       };
-      
-      console.log('[Store] Image extracted, length:', imageBase64.length);
 
       set(state => ({
         messages: [...state.messages, assistantMessage]
       }));
 
-      // Process and compress generated image before upload
-      console.log('[Store] Processing generated image (resize & compress)...');
-      
-      // Convert base64 to Blob for processing
-      const base64Response = await fetch(`data:image/png;base64,${imageBase64}`);
-      const blob = await base64Response.blob();
-      const file = new File([blob], 'generated-image.png', { type: 'image/png' });
-      
-      const processed = await processImage(file, 1500);
-      console.log('[IMG] Generated image - Original:', `${(blob.size / 1024).toFixed(2)} KB`, 'Compressed:', `${(processed.compressedSize / 1024).toFixed(2)} KB`);
-      
-      // Convert processed blob to File for upload
-      const compressedFile = new File([processed.blob], 'generated-image.jpg', {
-        type: 'image/jpeg',
-        lastModified: Date.now()
-      });
-      
-      // Upload compressed file to PostImages.org
-      console.log('[Store] Uploading compressed generated image to PostImages.org...');
-      const imageUrl = await get().uploadImageToPostImages(compressedFile);
+      console.log('[Store] Image message added to UI, rendering from base64');
 
-      // Update message with imageUrl and remove imageBase64
-      set(state => ({
-        messages: state.messages.map(msg => 
-          msg.id === tempMessageId
-            ? { ...msg, url: imageUrl, imageBase64: null }
-            : msg
-        )
-      }));
-
-      // Save to Firestore with new structure (type: "image", url, sender)
+      // Save to Firestore with base64 (data URL format)
       try {
-        await get().saveMessageToFirestore('assistant', '', modelToUse, imageUrl);
+        await get().saveMessageToFirestore('assistant', '', modelToUse, imageDataUrl, 'image');
+        console.log('[Store] Image message saved to Firestore successfully with base64');
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for generated image:', firestoreError);
         // Remove message from UI if Firestore save fails
@@ -622,8 +568,8 @@ export const useChatStore = create((set, get) => ({
         throw new Error('Failed to save generated image to Firestore');
       }
 
-      console.log('[Store] Generated image uploaded and saved successfully');
-      return imageUrl;
+      console.log('[Store] Generated image saved successfully (base64 only, no external upload)');
+      return imageDataUrl;
     } catch (error) {
       console.error('[Store] Error generating Nanobanana image:', error);
       // Remove message from UI on error
