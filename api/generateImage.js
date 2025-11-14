@@ -12,8 +12,8 @@ const ALLOWED_ORIGINS = [
  * Call Vertex AI Imagen predict endpoint
  * ONLY for imagen-4
  */
-const callImagenAPI = async (prompt, modelConfig = null, modelSettings = null) => {
-  const DEBUG_MODE = process.env.DEBUG_MODE === "true";
+const callImagenAPI = async (prompt, modelConfig = null, modelSettings = null, debugMode = false) => {
+  const DEBUG_MODE = process.env.DEBUG_MODE === "true" || debugMode === true;
   
   if (DEBUG_MODE) {
     console.log("[DEBUG] ============ IMAGEN API CALL =============");
@@ -84,8 +84,6 @@ const callImagenAPI = async (prompt, modelConfig = null, modelSettings = null) =
 
     const data = await response.json();
     
-    const DEBUG_MODE = process.env.DEBUG_MODE === "true";
-    
     if (DEBUG_MODE) {
       console.log("[DEBUG] ============ RAW RESPONSE =========");
       console.log(JSON.stringify(data, null, 2));
@@ -154,14 +152,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const DEBUG_MODE = process.env.DEBUG_MODE === "true";
+    const { prompt, model, modelSettings, debugMode: requestDebugMode } = req.body;
+    const DEBUG_MODE = process.env.DEBUG_MODE === "true" || requestDebugMode === true;
     
     if (DEBUG_MODE) {
       console.log("[DEBUG] ============ INCOMING =============");
       console.log(JSON.stringify(req.body, null, 2));
     }
-
-    const { prompt, model, modelSettings } = req.body;
 
     // Validate required fields
     if (!prompt || typeof prompt !== 'string') {
@@ -190,7 +187,7 @@ export default async function handler(req, res) {
 
     // Generate image via Vertex AI
     console.log('[API:IMAGEN] Calling Imagen API:', { prompt, model: modelToUse });
-    const result = await callImagenAPI(prompt, modelConfig, modelSettings);
+    const result = await callImagenAPI(prompt, modelConfig, modelSettings, DEBUG_MODE);
 
     if (!result.imageBase64) {
       return res.status(500).json({ error: 'Failed to generate image' });

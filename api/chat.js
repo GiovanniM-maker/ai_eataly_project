@@ -114,14 +114,14 @@ const getAccessToken = async () => {
  * Call Google Gemini API (REST API v1)
  * ONLY for gemini-2.5-flash (text model)
  */
-const callGeminiAPI = async (model, message, modelConfig = null, modelSettings = null) => {
+const callGeminiAPI = async (model, message, modelConfig = null, modelSettings = null, debugMode = false) => {
   const accessToken = await getAccessToken();
   
   // Gemini 2.x models use v1 API
   const apiVersion = "v1";
   const endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent`;
   
-  const DEBUG_MODE = process.env.DEBUG_MODE === "true";
+  const DEBUG_MODE = process.env.DEBUG_MODE === "true" || debugMode === true;
   
   if (DEBUG_MODE) {
     console.log("[DEBUG] ============ GEMINI API CALL =============");
@@ -234,14 +234,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const DEBUG_MODE = process.env.DEBUG_MODE === "true";
+    const { message, model: requestedModel, modelSettings, debugMode: requestDebugMode } = req.body;
+    const DEBUG_MODE = process.env.DEBUG_MODE === "true" || requestDebugMode === true;
     
     if (DEBUG_MODE) {
       console.log("[DEBUG] ============ INCOMING =============");
       console.log(JSON.stringify(req.body, null, 2));
     }
-
-    const { message, model: requestedModel, modelSettings } = req.body;
 
     // Validate required fields
     if (!message || typeof message !== 'string') {
@@ -270,7 +269,7 @@ export default async function handler(req, res) {
 
     // Call Gemini API with config and modelSettings
     console.log('[API] Calling Gemini API:', { model, messageLength: message.length });
-    const result = await callGeminiAPI(model, message, modelConfig, modelSettings);
+    const result = await callGeminiAPI(model, message, modelConfig, modelSettings, DEBUG_MODE);
 
     // Extract reply from response
     const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';

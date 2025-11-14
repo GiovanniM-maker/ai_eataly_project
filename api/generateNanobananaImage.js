@@ -70,8 +70,8 @@ function extractText(obj) {
  * Call Vertex AI Gemini generateContent (NOT streaming)
  * Supports gemini-2.5-flash-image and gemini-2.5-nano-banana
  */
-const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = null) => {
-  const DEBUG_MODE = process.env.DEBUG_MODE === "true";
+const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = null, debugMode = false) => {
+  const DEBUG_MODE = process.env.DEBUG_MODE === "true" || debugMode === true;
   
   if (DEBUG_MODE) {
     console.log("[DEBUG] ============ NANOBANANA API CALL =============");
@@ -186,8 +186,6 @@ const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = nul
   // STEP 3: Extract image (NO STREAMING)
   const data = await response.json();
   
-  const DEBUG_MODE = process.env.DEBUG_MODE === "true";
-  
   if (DEBUG_MODE) {
     console.log("[DEBUG] ============ RAW RESPONSE =========");
     console.log(JSON.stringify(data, null, 2));
@@ -254,14 +252,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const DEBUG_MODE = process.env.DEBUG_MODE === "true";
+    const { prompt, model, modelSettings, debugMode: requestDebugMode } = req.body;
+    const DEBUG_MODE = process.env.DEBUG_MODE === "true" || requestDebugMode === true;
     
     if (DEBUG_MODE) {
       console.log("[DEBUG] ============ INCOMING =============");
       console.log(JSON.stringify(req.body, null, 2));
     }
-
-    const { prompt, model, modelSettings } = req.body;
 
     // Validate required fields
     if (!prompt || typeof prompt !== 'string') {
@@ -295,7 +292,7 @@ export default async function handler(req, res) {
 
     // Generate via Vertex AI generateContent (NOT streaming)
     console.log('[API:NANOBANANA] Calling Nanobanana API:', { prompt, model: modelToUse, outputType: normalizedOutputType });
-    const result = await callNanobananaAPI(prompt, modelConfig, modelSettings);
+    const result = await callNanobananaAPI(prompt, modelConfig, modelSettings, DEBUG_MODE);
 
     // Build response
     const responseData = {};

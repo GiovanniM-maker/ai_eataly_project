@@ -808,6 +808,7 @@ export const useChatStore = create((set, get) => ({
 
       // Build modelSettings from current config
       const modelSettings = get().buildModelSettings(modelToUse);
+      const { debugMode } = get();
       
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -817,7 +818,8 @@ export const useChatStore = create((set, get) => ({
         body: JSON.stringify({
           model: config.googleModel,
           prompt: prompt,
-          ...(modelSettings && { modelSettings })
+          ...(modelSettings && { modelSettings }),
+          debugMode: debugMode
         }),
       });
 
@@ -899,6 +901,7 @@ export const useChatStore = create((set, get) => ({
 
       // Build modelSettings from current config
       const modelSettings = get().buildModelSettings(modelToUse);
+      const { debugMode } = get();
       
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -908,7 +911,8 @@ export const useChatStore = create((set, get) => ({
         body: JSON.stringify({
           model: config.googleModel,
           prompt: prompt,
-          ...(modelSettings && { modelSettings })
+          ...(modelSettings && { modelSettings }),
+          debugMode: debugMode
         }),
       });
 
@@ -1090,6 +1094,7 @@ export const useChatStore = create((set, get) => ({
 
         // Build modelSettings from current config
         const modelSettings = get().buildModelSettings(selectedModel);
+        const { debugMode } = get();
         
         const response = await fetch(apiUrl, {
           method: 'POST',
@@ -1099,7 +1104,8 @@ export const useChatStore = create((set, get) => ({
           body: JSON.stringify({
             message: message,
             model: config.googleModel,
-            ...(modelSettings && { modelSettings })
+            ...(modelSettings && { modelSettings }),
+            debugMode: debugMode
           }),
         });
 
