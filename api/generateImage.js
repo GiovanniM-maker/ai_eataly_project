@@ -110,49 +110,36 @@ const getAccessToken = async () => {
 };
 
 /**
- * Check if model is an Imagen model (uses different payload format)
- */
-const isImagenModel = (model) => {
-  return model && model.startsWith('imagen-');
-};
-
-/**
- * Check if model is a Gemini image model
- */
-const isGeminiImageModel = (model) => {
-  return model && (model.includes('gemini') && model.includes('image'));
-};
-
-/**
  * Call Google Gemini/Imagen API to generate image
- * Uses generateImage endpoint (NOT generateContent) for image models
+ * Imagen: uses generateImage endpoint
+ * Gemini Image: uses generateContent endpoint with responseMimeType
  */
-const callGeminiImageAPI = async (prompt, model = "gemini-2.5-flash-image", imageType = "gemini") => {
+const callGeminiImageAPI = async (prompt, model, provider) => {
   const accessToken = await getAccessToken();
   const apiVersion = "v1";
   
-  // Image models MUST use generateImage endpoint
-  const endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateImage`;
+  let endpoint;
+  let requestBody;
   
   console.log("[API] ========================================");
   console.log("[API] IMAGE GENERATION REQUEST");
   console.log("[API] Model:", model);
-  console.log("[API] Image Type:", imageType);
-  console.log("[API] Endpoint:", endpoint);
+  console.log("[API] Provider:", provider);
   console.log("[API] Prompt:", prompt);
-
-  let requestBody;
-
-  // Different payload format for Imagen vs Gemini image models
-  if (imageType === 'imagen') {
-    // Imagen models use simple prompt format
+  
+  if (provider === 'imagen') {
+    // Imagen models use generateImage endpoint
+    endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateImage`;
     requestBody = {
       prompt: prompt,
       sampleCount: 1
     };
-    console.log("[API] Using Imagen payload format");
+    console.log("[API] Using Imagen provider");
+    console.log("[API] Endpoint:", endpoint);
+    console.log("[API] Payload format: { prompt, sampleCount }");
   } else {
-    // Gemini image models use contents format
+    // Gemini Image models use generateContent endpoint
+    endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent`;
     requestBody = {
       contents: [
         {
@@ -161,11 +148,12 @@ const callGeminiImageAPI = async (prompt, model = "gemini-2.5-flash-image", imag
         }
       ],
       generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048
+        responseMimeType: "image/png"
       }
     };
-    console.log("[API] Using Gemini image payload format");
+    console.log("[API] Using Gemini Image provider");
+    console.log("[API] Endpoint:", endpoint);
+    console.log("[API] Payload format: { contents, generationConfig: { responseMimeType: 'image/png' } }");
   }
 
   console.log("[API] Request Body:", JSON.stringify(requestBody, null, 2));
@@ -185,7 +173,15 @@ const callGeminiImageAPI = async (prompt, model = "gemini-2.5-flash-image", imag
     console.error("[API] IMAGE GENERATION ERROR");
     console.error("[API] Status:", response.status);
     console.error("[API] Status Text:", response.statusText);
-    console.error("[API] Raw Error:", errorText);
+    console.error("[API] Raw Error Response:", errorText);
+    if (process.env.NODE_ENV === 'development') {
+      console.error("[API] Full Error Details:", {
+        url: endpoint,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody
+      });
+    }
     console.error("[API] ========================================");
     throw new Error(`Gemini API error: ${response.status} ${errorText}`);
   }
@@ -194,25 +190,33 @@ const callGeminiImageAPI = async (prompt, model = "gemini-2.5-flash-image", imag
   console.log("[API] Image generation response received");
   console.log("[API] Response keys:", Object.keys(data));
   
-  // Extract base64 image from response
-  // Imagen returns: { generatedImages: [{ imageBase64: "..." }] }
-  // Gemini image returns: { image: "base64..." } or similar
+  if (process.env.NODE_ENV === 'development') {
+    console.log("[API] Raw Response (first 500 chars):", JSON.stringify(data).substring(0, 500));
+  }
+  
+  // Extract base64 image from response based on provider
   let imageBase64 = null;
   
-  if (data.generatedImages && data.generatedImages[0]) {
-    // Imagen format
-    imageBase64 = data.generatedImages[0].imageBase64 || data.generatedImages[0].image;
-    console.log("[API] Extracted image from generatedImages array");
-  } else if (data.image) {
-    // Direct image field
-    imageBase64 = data.image;
-    console.log("[API] Extracted image from image field");
-  } else if (data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
-    // Gemini format
-    imageBase64 = data.candidates[0].content.parts[0].inlineData.data;
-    console.log("[API] Extracted image from candidates");
+  if (provider === 'imagen') {
+    // Imagen returns: { images: [{ base64: "..." }] }
+    if (data.images && data.images[0] && data.images[0].base64) {
+      imageBase64 = data.images[0].base64;
+      console.log("[API] Extracted image from Imagen response: images[0].base64");
+    } else if (data.generatedImages && data.generatedImages[0]) {
+      // Fallback format
+      imageBase64 = data.generatedImages[0].imageBase64 || data.generatedImages[0].image;
+      console.log("[API] Extracted image from Imagen response: generatedImages[0]");
+    } else {
+      console.error("[API] Imagen response structure:", JSON.stringify(data, null, 2));
+    }
   } else {
-    console.error("[API] Could not find image in response:", JSON.stringify(data, null, 2));
+    // Gemini Image returns: { candidates: [{ content: { parts: [{ inlineData: { data: "..." } }] } }] }
+    if (data.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
+      imageBase64 = data.candidates[0].content.parts[0].inlineData.data;
+      console.log("[API] Extracted image from Gemini response: candidates[0].content.parts[0].inlineData.data");
+    } else {
+      console.error("[API] Gemini response structure:", JSON.stringify(data, null, 2));
+    }
   }
   
   if (!imageBase64) {
@@ -259,7 +263,7 @@ export default async function handler(req, res) {
       url: req.url
     });
 
-    const { prompt, model, imageType } = req.body;
+    const { prompt, model, provider } = req.body;
 
     // Validate required fields
     if (!prompt || typeof prompt !== 'string') {
@@ -286,12 +290,12 @@ export default async function handler(req, res) {
       });
     }
 
-    // Determine image type (imagen vs gemini) for payload format
-    const finalImageType = imageType || (isImagenModel(modelToUse) ? 'imagen' : 'gemini');
+    // Determine provider (imagen vs gemini) for endpoint and payload format
+    const finalProvider = provider || (modelToUse.startsWith('imagen-') ? 'imagen' : 'gemini');
 
     // Generate image
-    console.log('[API] Calling Image API:', { prompt, model: modelToUse, imageType: finalImageType });
-    const imageBase64 = await callGeminiImageAPI(prompt, modelToUse, finalImageType);
+    console.log('[API] Calling Image API:', { prompt, model: modelToUse, provider: finalProvider });
+    const imageBase64 = await callGeminiImageAPI(prompt, modelToUse, finalProvider);
 
     if (!imageBase64) {
       return res.status(500).json({ error: 'Failed to generate image' });

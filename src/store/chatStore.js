@@ -454,12 +454,16 @@ export const useChatStore = create((set, get) => ({
     try {
       const apiUrl = import.meta.env.VITE_API_URL || config.endpoint;
       
-      // Determine image type for payload format
-      const imageType = config.imageType || (modelToUse.startsWith('imagen-') ? 'imagen' : 'gemini');
+      // Get provider from config (imagen or gemini)
+      const provider = config.provider || (modelToUse.startsWith('imagen-') ? 'imagen' : 'gemini');
       
-      console.log('[Store] Calling image generation API:', apiUrl);
-      console.log('[Store] Model config:', config);
-      console.log('[Store] Request body:', { prompt, model: config.googleModel, imageType });
+      console.log('[Store] ========================================');
+      console.log('[Store] IMAGE GENERATION REQUEST');
+      console.log('[Store] Model:', modelToUse);
+      console.log('[Store] Provider:', provider);
+      console.log('[Store] Endpoint:', apiUrl);
+      console.log('[Store] Prompt:', prompt);
+      console.log('[Store] Model Config:', config);
 
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -469,7 +473,7 @@ export const useChatStore = create((set, get) => ({
         body: JSON.stringify({
           prompt: prompt,
           model: config.googleModel,
-          imageType: imageType
+          provider: provider
         }),
       });
 
@@ -486,13 +490,18 @@ export const useChatStore = create((set, get) => ({
 
       const data = await response.json();
       console.log('[Store] Image generation response received');
+      console.log('[Store] Response keys:', Object.keys(data));
       
       // Extract imageBase64 from response (support both 'image' and 'imageBase64' fields)
       const imageBase64 = data.image || data.imageBase64;
       
       if (!imageBase64) {
+        console.error('[Store] No image data in response:', data);
         throw new Error('No image data in API response');
       }
+
+      // Create data URL for immediate display
+      const imageDataUrl = `data:image/png;base64,${imageBase64}`;
 
       // Add assistant message with base64 image (temporary)
       const assistantMessage = {
@@ -503,8 +512,11 @@ export const useChatStore = create((set, get) => ({
         content: '',
         model: modelToUse,
         imageBase64: imageBase64, // Temporary, will be replaced with URL
+        imageUrl: imageDataUrl, // Data URL for immediate display
         timestamp: Date.now()
       };
+      
+      console.log('[Store] Image extracted, length:', imageBase64.length);
 
       set(state => ({
         messages: [...state.messages, assistantMessage]
