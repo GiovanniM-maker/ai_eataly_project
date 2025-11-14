@@ -73,14 +73,29 @@ export const useChatStore = create((set, get) => ({
       
       querySnapshot.forEach((doc) => {
         const data = doc.data();
-        loadedMessages.push({
-          id: doc.id,
-          role: data.role,
-          content: data.text || '',
-          imageUrl: data.imageUrl || null,
-          timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-          model: data.model || 'gemini-2.5-flash'
-        });
+        
+        // Handle image messages (new structure)
+        if (data.type === 'image') {
+          loadedMessages.push({
+            id: doc.id,
+            type: 'image',
+            url: data.url,
+            role: data.sender === 'user' ? 'user' : 'assistant',
+            sender: data.sender,
+            timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
+            model: data.model || 'gemini-2.5-flash'
+          });
+        } else {
+          // Handle text messages (legacy structure)
+          loadedMessages.push({
+            id: doc.id,
+            role: data.role,
+            content: data.text || '',
+            imageUrl: data.imageUrl || null, // Legacy support
+            timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
+            model: data.model || 'gemini-2.5-flash'
+          });
+        }
       });
 
       console.log('[Store] Loaded', loadedMessages.length, 'messages from Firestore');
@@ -123,14 +138,30 @@ export const useChatStore = create((set, get) => ({
           snapshot.docChanges().forEach((change) => {
             if (change.type === 'added' && !seenIds.has(change.doc.id)) {
               const data = change.doc.data();
-              const newMessage = {
-                id: change.doc.id,
-                role: data.role,
-                content: data.text || '',
-                imageUrl: data.imageUrl || null,
-                timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-                model: data.model || 'gemini-2.5-flash'
-              };
+              
+              // Handle image messages (new structure)
+              let newMessage;
+              if (data.type === 'image') {
+                newMessage = {
+                  id: change.doc.id,
+                  type: 'image',
+                  url: data.url,
+                  role: data.sender === 'user' ? 'user' : 'assistant',
+                  sender: data.sender,
+                  timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
+                  model: data.model || 'gemini-2.5-flash'
+                };
+              } else {
+                // Handle text messages (legacy structure)
+                newMessage = {
+                  id: change.doc.id,
+                  role: data.role,
+                  content: data.text || '',
+                  imageUrl: data.imageUrl || null, // Legacy support
+                  timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
+                  model: data.model || 'gemini-2.5-flash'
+                };
+              }
               
               // Duplicate check
               if (!isDuplicate(currentMessages, newMessage)) {
@@ -161,22 +192,27 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * Upload base64 image to ImgBB and get URL
+   * Upload image file to PostImages.org via /api/uploadImage
+   * Uses multipart/form-data (NO API KEY REQUIRED)
    */
-  uploadBase64ToUrl: async (base64) => {
+  uploadImageToPostImages: async (file) => {
     try {
       const apiUrl = import.meta.env.VITE_API_URL || '/api/uploadImage';
       
-      console.log('[Store] Uploading image to ImgBB...');
+      console.log('[Store] Uploading image to PostImages.org...', {
+        name: file.name,
+        size: `${(file.size / 1024).toFixed(2)} KB`,
+        type: file.type
+      });
+
+      // Create FormData for multipart/form-data
+      const formData = new FormData();
+      formData.append('file', file);
 
       const response = await fetch(apiUrl, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          base64: base64
-        }),
+        body: formData,
+        // Don't set Content-Type header - browser will set it with boundary
       });
 
       if (!response.ok) {
@@ -187,15 +223,17 @@ export const useChatStore = create((set, get) => ({
         } catch {
           errorData = { error: errorText || `HTTP ${response.status}` };
         }
-        throw new Error(errorData.error || errorData.message || `Upload error: ${response.status}`);
+        const errorMessage = errorData.error || errorData.message || `Upload error: ${response.status}`;
+        console.error('[Store] Upload failed:', errorMessage);
+        throw new Error(errorMessage || 'Impossibile caricare l\'immagine');
       }
 
       const data = await response.json();
-      console.log('[Store] Image uploaded to ImgBB, URL:', data.url);
+      console.log('[Store] Image uploaded to PostImages.org, URL:', data.url);
       return data.url;
     } catch (error) {
-      console.error('[Store] Error uploading image to ImgBB:', error);
-      throw error;
+      console.error('[Store] Error uploading image to PostImages.org:', error);
+      throw new Error(error.message || 'Impossibile caricare l\'immagine');
     }
   },
 
@@ -213,17 +251,34 @@ export const useChatStore = create((set, get) => ({
 
   /**
    * Save message to Firestore
+   * For image messages: type: "image", url, sender, model, createdAt
+   * For text messages: role, text, model, createdAt
    */
   saveMessageToFirestore: async (role, text, model = 'gemini-2.5-flash', imageUrl = null) => {
     const { sessionId } = get();
     
     try {
       const messagesRef = getMessagesRef(sessionId);
+      
+      // If imageUrl is provided, save as image message
+      if (imageUrl) {
+        const messageData = {
+          type: 'image',
+          url: imageUrl,
+          sender: role === 'user' ? 'user' : 'assistant',
+          model,
+          createdAt: serverTimestamp()
+        };
+        const docRef = await addDoc(messagesRef, messageData);
+        console.log('[Store] Image message saved to Firestore:', docRef.id);
+        return docRef.id;
+      }
+      
+      // Otherwise, save as text message
       const messageData = {
         role,
         text: text || null,
         model,
-        imageUrl: imageUrl || null,
         createdAt: serverTimestamp()
       };
 
@@ -248,7 +303,7 @@ export const useChatStore = create((set, get) => ({
       // Log original size
       console.log('[IMG] Original size:', `${(file.size / 1024).toFixed(2)} KB`);
       
-      // Process image: resize, compress, convert to base64
+      // Process image: resize, compress
       console.log('[Store] Processing image (resize & compress)...');
       const processed = await processImage(file, 1500);
       
@@ -257,11 +312,18 @@ export const useChatStore = create((set, get) => ({
       // Create preview from compressed blob
       const localPreviewUrl = URL.createObjectURL(processed.blob);
       
+      // Convert blob to File for upload
+      const compressedFile = new File([processed.blob], file.name || 'image.jpg', {
+        type: 'image/jpeg',
+        lastModified: Date.now()
+      });
+      
       // Add user message with compressed preview immediately to UI
       const userMessage = {
         id: tempMessageId,
+        type: 'image',
         role: 'user',
-        content: '',
+        sender: 'user',
         localPreviewUrl,
         timestamp: Date.now()
       };
@@ -270,15 +332,15 @@ export const useChatStore = create((set, get) => ({
         messages: [...state.messages, userMessage]
       }));
 
-      // Upload compressed base64 to ImgBB
-      console.log('[Store] Uploading compressed image to ImgBB...');
-      const imageUrl = await get().uploadBase64ToUrl(processed.base64);
+      // Upload compressed file to PostImages.org
+      console.log('[Store] Uploading compressed image to PostImages.org...');
+      const imageUrl = await get().uploadImageToPostImages(compressedFile);
 
       // Update message with imageUrl and remove localPreviewUrl
       set(state => ({
         messages: state.messages.map(msg => 
           msg.id === tempMessageId
-            ? { ...msg, imageUrl, localPreviewUrl: null }
+            ? { ...msg, url: imageUrl, localPreviewUrl: null }
             : msg
         )
       }));
@@ -286,7 +348,7 @@ export const useChatStore = create((set, get) => ({
       // Clean up local preview URL
       URL.revokeObjectURL(localPreviewUrl);
 
-      // Save to Firestore with imageUrl
+      // Save to Firestore with new structure (type: "image", url, sender)
       try {
         await get().saveMessageToFirestore('user', null, 'gemini-2.5-flash', imageUrl);
       } catch (firestoreError) {
@@ -350,7 +412,9 @@ export const useChatStore = create((set, get) => ({
       // Add assistant message with base64 image (temporary)
       const assistantMessage = {
         id: tempMessageId,
+        type: 'image',
         role: 'assistant',
+        sender: 'assistant',
         content: '',
         imageBase64: data.imageBase64, // Temporary, will be replaced with URL
         timestamp: Date.now()
@@ -371,20 +435,26 @@ export const useChatStore = create((set, get) => ({
       const processed = await processImage(file, 1500);
       console.log('[IMG] Generated image - Original:', `${(blob.size / 1024).toFixed(2)} KB`, 'Compressed:', `${(processed.compressedSize / 1024).toFixed(2)} KB`);
       
-      // Upload compressed base64 to ImgBB
-      console.log('[Store] Uploading compressed generated image to ImgBB...');
-      const imageUrl = await get().uploadBase64ToUrl(processed.base64);
+      // Convert processed blob to File for upload
+      const compressedFile = new File([processed.blob], 'generated-image.jpg', {
+        type: 'image/jpeg',
+        lastModified: Date.now()
+      });
+      
+      // Upload compressed file to PostImages.org
+      console.log('[Store] Uploading compressed generated image to PostImages.org...');
+      const imageUrl = await get().uploadImageToPostImages(compressedFile);
 
       // Update message with imageUrl and remove imageBase64
       set(state => ({
         messages: state.messages.map(msg => 
           msg.id === tempMessageId
-            ? { ...msg, imageUrl, imageBase64: null }
+            ? { ...msg, url: imageUrl, imageBase64: null }
             : msg
         )
       }));
 
-      // Save to Firestore with imageUrl
+      // Save to Firestore with new structure (type: "image", url, sender)
       try {
         await get().saveMessageToFirestore('assistant', '', 'gemini-2.5-flash', imageUrl);
       } catch (firestoreError) {

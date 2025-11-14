@@ -5,8 +5,13 @@ const ALLOWED_ORIGINS = [
   'https://ai-eataly-project.vercel.app'
 ];
 
+import formidable from 'formidable-serverless';
+import FormData from 'form-data';
+import fs from 'fs';
+
 /**
- * Main handler for image upload to ImgBB
+ * Main handler for image upload to PostImages.org
+ * NO API KEY REQUIRED
  */
 export default async function handler(req, res) {
   // Handle CORS
@@ -36,49 +41,72 @@ export default async function handler(req, res) {
     console.log('[UploadImage] Incoming request', {
       method: req.method,
       origin: req.headers.origin,
-      url: req.url
+      url: req.url,
+      contentType: req.headers['content-type']
     });
 
-    const { base64 } = req.body;
+    // Parse multipart/form-data
+    // For Vercel serverless, we need to handle the raw body
+    const form = formidable({
+      maxFileSize: 10 * 1024 * 1024, // 10MB max
+      keepExtensions: true,
+    });
 
-    if (!base64) {
-      return res.status(400).json({ error: 'Missing base64' });
+    // Parse the request (formidable-serverless works with Vercel)
+    const [fields, files] = await form.parse(req);
+    
+    const uploadedFile = Array.isArray(files.file) ? files.file[0] : files.file;
+    
+    if (!uploadedFile) {
+      console.error('[UploadImage] No file in request');
+      return res.status(400).json({ error: 'Missing file in request' });
     }
 
-    const apiKey = process.env.IMGBB_API_KEY;
-    if (!apiKey) {
-      console.error('[UploadImage] Missing IMGBB_API_KEY environment variable');
-      return res.status(500).json({ error: 'Missing IMGBB_API_KEY' });
-    }
+    console.log('[UploadImage] File received:', {
+      name: uploadedFile.originalFilename || uploadedFile.newFilename,
+      size: uploadedFile.size,
+      type: uploadedFile.mimetype,
+      path: uploadedFile.filepath
+    });
 
-    // Clean base64 string (remove data URL prefix if present)
-    const cleanBase64 = base64.replace(/^data:image\/[a-z]+;base64,/, '');
+    // Read file from temporary path
+    const fileBuffer = fs.readFileSync(uploadedFile.filepath);
+    
+    // Create FormData for PostImages.org
+    const formData = new FormData();
+    formData.append('upload', fileBuffer, {
+      filename: uploadedFile.originalFilename || 'image.jpg',
+      contentType: uploadedFile.mimetype || 'image/jpeg'
+    });
 
-    console.log('[UploadImage] Uploading to ImgBB...');
+    console.log('[UploadImage] Uploading to PostImages.org...');
 
-    const uploadRes = await fetch('https://api.imgbb.com/1/upload', {
+    // POST to PostImages.org
+    const uploadRes = await fetch('https://postimages.org/json/rr', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        key: apiKey,
-        image: cleanBase64
-      })
+      body: formData,
+      headers: formData.getHeaders()
     });
+
+    // Clean up temporary file
+    try {
+      fs.unlinkSync(uploadedFile.filepath);
+    } catch (cleanupError) {
+      console.warn('[UploadImage] Failed to cleanup temp file:', cleanupError);
+    }
 
     if (!uploadRes.ok) {
       const errorText = await uploadRes.text();
-      console.error('[UploadImage] ImgBB API error:', uploadRes.status, errorText);
-      throw new Error(`ImgBB upload failed: ${uploadRes.status} ${errorText}`);
+      console.error('[UploadImage] PostImages.org API error:', uploadRes.status, errorText);
+      throw new Error(`PostImages.org upload failed: ${uploadRes.status} ${errorText}`);
     }
 
     const data = await uploadRes.json();
-    const url = data?.data?.url;
+    const url = data?.url;
 
     if (!url) {
-      console.error('[UploadImage] No URL in ImgBB response:', data);
-      throw new Error('No URL returned from ImgBB');
+      console.error('[UploadImage] No URL in PostImages.org response:', data);
+      throw new Error('No URL returned from PostImages.org');
     }
 
     console.log('[UploadImage] Upload successful, URL:', url);
@@ -86,7 +114,12 @@ export default async function handler(req, res) {
     return res.status(200).json({ url });
   } catch (err) {
     console.error('[UploadImage] ERROR:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ 
+      error: err.message || 'Impossibile caricare l\'immagine',
+      details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
   }
 }
 
+// Note: Vercel serverless functions automatically handle body parsing
+// formidable-serverless works directly with the request stream

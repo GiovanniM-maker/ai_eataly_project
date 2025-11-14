@@ -147,12 +147,22 @@ const ChatUI = () => {
                   {message.content && (
                     <p className="whitespace-pre-wrap mb-2">{message.content}</p>
                   )}
-                  {/* Image from URL (saved in Firestore) */}
-                  {message.imageUrl && (
+                  {/* Image messages: type === "image" with url */}
+                  {message.type === 'image' && message.url && (
+                    <img
+                      src={message.url}
+                      alt={message.role === 'user' ? 'Uploaded image' : 'Generated image'}
+                      className="max-w-full rounded-lg mt-2"
+                      style={{ maxWidth: '100%', height: 'auto' }}
+                    />
+                  )}
+                  {/* Legacy: Image from URL (for backward compatibility) */}
+                  {!message.type && message.imageUrl && (
                     <img
                       src={message.imageUrl}
                       alt={message.role === 'user' ? 'Uploaded image' : 'Generated image'}
-                      className="max-w-[240px] rounded-lg mt-2"
+                      className="max-w-full rounded-lg mt-2"
+                      style={{ maxWidth: '100%', height: 'auto' }}
                     />
                   )}
                   {/* Image from base64 (temporary, during upload) */}
@@ -160,7 +170,8 @@ const ChatUI = () => {
                     <img
                       src={`data:image/png;base64,${message.imageBase64}`}
                       alt="Generated image"
-                      className="max-w-[240px] rounded-lg mt-2"
+                      className="max-w-full rounded-lg mt-2"
+                      style={{ maxWidth: '100%', height: 'auto' }}
                     />
                   )}
                   {/* Image from local preview (temporary, user upload) */}
@@ -168,7 +179,8 @@ const ChatUI = () => {
                     <img
                       src={message.localPreviewUrl}
                       alt="Uploaded image"
-                      className="max-w-[240px] rounded-lg mt-2"
+                      className="max-w-full rounded-lg mt-2"
+                      style={{ maxWidth: '100%', height: 'auto' }}
                     />
                   )}
                 </div>
