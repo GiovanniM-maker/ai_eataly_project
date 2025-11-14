@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { collection, getDocs, addDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, getDoc, doc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 /**
@@ -100,19 +100,59 @@ export async function testFirestoreRead() {
   }
 }
 
-/**
- * Test Firestore Write
- */
+// SUPER DETAILED WRITE DEBUG
 export async function testFirestoreWrite() {
+  console.group("[🔥 Firestore WRITE DEBUG]");
+
   try {
-    const docRef = await addDoc(collection(db, "test"), {
-      message: "hello",
-      ts: Date.now()
-    });
-    console.log('[Firestore] Write test - Document ID:', docRef.id);
+    console.log("➡️ Starting write test...");
+
+    console.log("📌 Project ID:", import.meta.env.VITE_FIREBASE_PROJECT_ID);
+    console.log("📌 Firestore Instance:", db);
+
+    const testCollection = "test";
+    const payload = {
+      timestamp: Date.now(),
+      example: "write-test",
+      envProjectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    };
+
+    console.log("🧪 Payload:", payload);
+    console.log("📁 Writing to collection:", testCollection);
+
+    // REAL WRITE COMMAND
+    const ref = await addDoc(collection(db, testCollection), payload);
+
+    console.log("✅ WRITE SUCCESS - Document ID:", ref.id);
+
+    // VERIFY BY READING BACK
+    const snap = await getDoc(doc(db, testCollection, ref.id));
+
+    if (snap.exists()) {
+      console.log("📖 CONFIRMED READ BACK:", snap.data());
+    } else {
+      console.warn("⚠️ READ BACK FAILED — document not found after write");
+    }
+
+    console.groupEnd();
     return true;
+
   } catch (error) {
-    console.error('[Firestore] Write test - ERROR:', error);
+    console.group("❌ WRITE ERROR DETAILS");
+    console.error("Error:", error);
+    console.error("Error code:", error.code);
+    console.error("Error message:", error.message);
+    console.error("Error stack:", error.stack);
+    console.groupEnd();
+
+    console.group("🧠 Possible Causes");
+    console.warn("1️⃣ Firestore Rules block writes");
+    console.warn("2️⃣ Wrong projectId / wrong environment variables");
+    console.warn("3️⃣ Firestore is Datastore Mode (write not allowed)");
+    console.warn("4️⃣ App using different Firebase project than expected");
+    console.groupEnd();
+
+    console.groupEnd();
     return false;
   }
 }
