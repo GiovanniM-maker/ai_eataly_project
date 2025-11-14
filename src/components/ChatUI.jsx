@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useChatStore, testFirestoreRead, testFirestoreWrite } from '../store/chatStore';
+import ModelSelector from './ModelSelector';
+import { getModelDisplayName } from '../constants/models';
 
 /**
  * Minimal Chat UI Component with Firestore persistence
  */
 const ChatUI = () => {
-  const { messages, sendMessage, sendImageMessage, generateImage, loadMessages, firestoreError, loading } = useChatStore();
+  const { messages, sendMessage, sendImageMessage, generateImage, loadMessages, firestoreError, loading, selectedModel } = useChatStore();
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -115,8 +117,9 @@ const ChatUI = () => {
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-white">
       {/* Header */}
-      <div className="border-b border-gray-800 bg-gray-900 px-6 py-4">
+      <div className="border-b border-gray-800 bg-gray-900 px-6 py-4 flex items-center justify-between">
         <h1 className="text-xl font-semibold">AI Chat</h1>
+        <ModelSelector />
       </div>
 
       {/* Messages Area */}
@@ -143,6 +146,14 @@ const ChatUI = () => {
                       : 'bg-gray-800 text-gray-100'
                   }`}
                 >
+                  {/* Model label (if different from selected) */}
+                  {message.model && message.model !== selectedModel && (
+                    <div className="mb-2">
+                      <span className="text-xs opacity-70 italic">
+                        Model: {getModelDisplayName(message.model)}
+                      </span>
+                    </div>
+                  )}
                   {/* Text content */}
                   {message.content && (
                     <p className="whitespace-pre-wrap mb-2">{message.content}</p>

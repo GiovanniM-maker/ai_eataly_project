@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db, app } from '../config/firebase';
 import { processImage } from '../utils/imageProcessor';
+import { DEFAULT_MODEL, isImagenModel } from '../constants/models';
 
 /**
  * Get or create session ID from localStorage
@@ -55,6 +56,15 @@ export const useChatStore = create((set, get) => ({
   firestoreError: null,
   unsubscribe: null,
   loading: false,
+  selectedModel: DEFAULT_MODEL,
+  
+  /**
+   * Set selected model
+   */
+  setSelectedModel: (model) => {
+    set({ selectedModel: model });
+    console.log('[Store] Model changed to:', model);
+  },
 
   /**
    * Load messages from Firestore
@@ -149,7 +159,7 @@ export const useChatStore = create((set, get) => ({
                   role: data.sender === 'user' ? 'user' : 'assistant',
                   sender: data.sender,
                   timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-                  model: data.model || 'gemini-2.5-flash'
+                  model: data.model || DEFAULT_MODEL
                 };
               } else {
                 // Handle text messages (legacy structure)
@@ -159,7 +169,7 @@ export const useChatStore = create((set, get) => ({
                   content: data.text || '',
                   imageUrl: data.imageUrl || null, // Legacy support
                   timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-                  model: data.model || 'gemini-2.5-flash'
+                  model: data.model || DEFAULT_MODEL
                 };
               }
               
@@ -254,7 +264,7 @@ export const useChatStore = create((set, get) => ({
    * For image messages: type: "image", url, sender, model, createdAt
    * For text messages: role, text, model, createdAt
    */
-  saveMessageToFirestore: async (role, text, model = 'gemini-2.5-flash', imageUrl = null) => {
+  saveMessageToFirestore: async (role, text, model = DEFAULT_MODEL, imageUrl = null) => {
     const { sessionId } = get();
     
     try {
@@ -350,7 +360,8 @@ export const useChatStore = create((set, get) => ({
 
       // Save to Firestore with new structure (type: "image", url, sender)
       try {
-        await get().saveMessageToFirestore('user', null, 'gemini-2.5-flash', imageUrl);
+        const { selectedModel } = get();
+        await get().saveMessageToFirestore('user', null, selectedModel, imageUrl);
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for image message:', firestoreError);
         // Remove message from UI if Firestore save fails
@@ -375,14 +386,16 @@ export const useChatStore = create((set, get) => ({
   /**
    * Generate image from prompt
    */
-  generateImage: async (prompt) => {
+  generateImage: async (prompt, model = null) => {
+    const { selectedModel } = get();
+    const modelToUse = model || selectedModel;
     const tempMessageId = `temp-${Date.now()}`;
     
     try {
       const apiUrl = import.meta.env.VITE_API_URL || '/api/generateImage';
       
       console.log('[Store] Calling image generation API:', apiUrl);
-      console.log('[Store] Request body:', { prompt });
+      console.log('[Store] Request body:', { prompt, model: modelToUse });
 
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -391,6 +404,7 @@ export const useChatStore = create((set, get) => ({
         },
         body: JSON.stringify({
           prompt: prompt,
+          model: modelToUse,
           size: "512x512"
         }),
       });
@@ -416,6 +430,7 @@ export const useChatStore = create((set, get) => ({
         role: 'assistant',
         sender: 'assistant',
         content: '',
+        model: modelToUse,
         imageBase64: data.imageBase64, // Temporary, will be replaced with URL
         timestamp: Date.now()
       };
@@ -456,7 +471,7 @@ export const useChatStore = create((set, get) => ({
 
       // Save to Firestore with new structure (type: "image", url, sender)
       try {
-        await get().saveMessageToFirestore('assistant', '', 'gemini-2.5-flash', imageUrl);
+        await get().saveMessageToFirestore('assistant', '', modelToUse, imageUrl);
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for generated image:', firestoreError);
         // Remove message from UI if Firestore save fails
@@ -482,12 +497,13 @@ export const useChatStore = create((set, get) => ({
    * Send a message to /api/chat and get reply
    */
   sendMessage: async (message) => {
-    const { sessionId } = get();
+    const { sessionId, selectedModel } = get();
     
     try {
-      // Check if message requests image generation
+      // Check if selected model is Imagen (always generate image) OR message requests image generation
       const lowerMessage = message.toLowerCase();
-      const isImageRequest = lowerMessage.includes('generate an image') || 
+      const isImageRequest = isImagenModel(selectedModel) ||
+                            lowerMessage.includes('generate an image') || 
                             lowerMessage.includes('create an image') ||
                             lowerMessage.includes('generate image') ||
                             lowerMessage.startsWith('image:');
@@ -501,6 +517,7 @@ export const useChatStore = create((set, get) => ({
           id: `temp-${Date.now()}`,
           role: 'user',
           content: message,
+          model: selectedModel,
           timestamp: Date.now()
         };
 
@@ -510,13 +527,13 @@ export const useChatStore = create((set, get) => ({
 
         // Save user message to Firestore
         try {
-          await get().saveMessageToFirestore('user', message);
+          await get().saveMessageToFirestore('user', message, selectedModel);
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed, continuing with API call:', firestoreError);
         }
 
         // Generate image instead of text response
-        await get().generateImage(prompt);
+        await get().generateImage(prompt, selectedModel);
         return null;
       }
 
@@ -525,6 +542,7 @@ export const useChatStore = create((set, get) => ({
         id: `temp-${Date.now()}`,
         role: 'user',
         content: message,
+        model: selectedModel,
         timestamp: Date.now()
       };
 
@@ -534,18 +552,17 @@ export const useChatStore = create((set, get) => ({
 
       // Save user message to Firestore
       try {
-        await get().saveMessageToFirestore('user', message);
+        await get().saveMessageToFirestore('user', message, selectedModel);
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed, continuing with API call:', firestoreError);
         // Continue even if Firestore fails
       }
 
-      // Call API
+      // Call API with selected model
       const apiUrl = import.meta.env.VITE_API_URL || '/api/chat';
-      const model = "gemini-2.5-flash";
       
       console.log('[Store] Calling API:', apiUrl);
-      console.log('[Store] Request body:', { message, model });
+      console.log('[Store] Request body:', { message, model: selectedModel });
 
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -554,7 +571,7 @@ export const useChatStore = create((set, get) => ({
         },
         body: JSON.stringify({
           message: message,
-          model: model
+          model: selectedModel
         }),
       });
 
@@ -577,6 +594,7 @@ export const useChatStore = create((set, get) => ({
         id: `temp-${Date.now() + 1}`,
         role: 'assistant',
         content: data.reply || 'No response generated',
+        model: selectedModel,
         timestamp: Date.now()
       };
 
@@ -586,7 +604,7 @@ export const useChatStore = create((set, get) => ({
 
       // Save assistant message to Firestore
       try {
-        await get().saveMessageToFirestore('assistant', data.reply || 'No response generated', model);
+        await get().saveMessageToFirestore('assistant', data.reply || 'No response generated', selectedModel);
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for assistant message:', firestoreError);
         // Continue even if Firestore fails

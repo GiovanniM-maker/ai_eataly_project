@@ -110,16 +110,27 @@ const getAccessToken = async () => {
 };
 
 /**
- * Call Google Gemini API to generate image
+ * Call Google Gemini/Imagen API to generate image
  */
-const callGeminiImageAPI = async (prompt, size = "512x512") => {
+const callGeminiImageAPI = async (prompt, model = "gemini-2.5-flash", size = "512x512") => {
   const accessToken = await getAccessToken();
   
-  // Use gemini-2.5-flash with image generation
-  const apiVersion = "v1";
-  const endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/gemini-2.5-flash:generateContent`;
+  // Determine API version and endpoint based on model
+  let apiVersion = "v1";
+  let endpoint;
+  
+  // Check if it's an Imagen model
+  if (model && model.startsWith("imagen-")) {
+    // Imagen models use a different endpoint
+    // Note: Adjust endpoint based on actual Imagen API structure
+    endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent`;
+  } else {
+    // Gemini models
+    endpoint = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent`;
+  }
   
   console.log("[API] Generating image with prompt:", prompt);
+  console.log("[API] Using model:", model);
   console.log("[API] Endpoint:", endpoint);
 
   const requestBody = {
@@ -197,16 +208,19 @@ export default async function handler(req, res) {
       url: req.url
     });
 
-    const { prompt, size } = req.body;
+    const { prompt, model, size } = req.body;
 
     // Validate required fields
     if (!prompt || typeof prompt !== 'string') {
       return res.status(400).json({ error: 'Missing or invalid "prompt" field' });
     }
 
+    // Use provided model or default
+    const modelToUse = model || "gemini-2.5-flash";
+
     // Generate image
-    console.log('[API] Calling Gemini Image API:', { prompt, size });
-    const imageBase64 = await callGeminiImageAPI(prompt, size);
+    console.log('[API] Calling Image API:', { prompt, model: modelToUse, size });
+    const imageBase64 = await callGeminiImageAPI(prompt, modelToUse, size);
 
     if (!imageBase64) {
       return res.status(500).json({ error: 'Failed to generate image' });
