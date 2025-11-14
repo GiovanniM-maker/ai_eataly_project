@@ -148,7 +148,8 @@ const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = nul
   }
 
   // Add response modalities based on outputType (priority: modelSettings > Firestore config)
-  const outputType = output_type || modelConfig?.outputType || 'IMAGE';
+  // Determine outputType once (with fallback)
+  const outputType = output_type ?? modelConfig?.outputType ?? 'IMAGE';
   const normalizedOutputType = outputType.toUpperCase();
   
   if (normalizedOutputType === 'TEXT+IMAGE' || normalizedOutputType === 'BOTH') {
@@ -194,9 +195,7 @@ const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = nul
     console.log(JSON.stringify(data, null, 2));
   }
 
-  // Extract both text and image based on outputType
-  const outputType = output_type || modelConfig?.outputType || 'IMAGE';
-  const normalizedOutputType = outputType.toUpperCase();
+  // Extract both text and image based on outputType (reuse the same variable declared above)
   const text = extractText(data);
   const imageBase64 = extractImageBase64(data);
 
@@ -289,8 +288,8 @@ export default async function handler(req, res) {
       });
     }
 
-    // Determine output type (priority: modelSettings > Firestore config)
-    const outputType = modelSettings?.output_type || modelConfig.outputType || 'IMAGE';
+    // Determine output type (priority: modelSettings > Firestore config, with fallback)
+    const outputType = modelSettings?.output_type ?? modelConfig?.outputType ?? 'IMAGE';
     const normalizedOutputType = outputType.toUpperCase();
 
     // Generate via Vertex AI generateContent (NOT streaming)

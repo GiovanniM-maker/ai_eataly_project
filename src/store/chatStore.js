@@ -1471,7 +1471,7 @@ export const useChatStore = create((set, get) => ({
           temperature: data.temperature ?? 0.7,
           topP: data.topP ?? 0.95,
           maxOutputTokens: data.maxOutputTokens ?? 8192,
-          outputType: data.outputType || 'TEXT',
+          outputType: data.outputType ?? 'TEXT',
           aspectRatio: data.aspectRatio || '1:1',
           sampleCount: data.sampleCount ?? 1,
           safetySettings: data.safetySettings || {},
@@ -1495,7 +1495,7 @@ export const useChatStore = create((set, get) => ({
           temperature: 0.7,
           topP: 0.95,
           maxOutputTokens: 8192,
-          outputType: modelId.includes('image') || modelId.includes('imagen') ? 'IMAGE' : 'TEXT',
+          outputType: (modelId.includes('image') || modelId.includes('imagen')) ? 'IMAGE' : 'TEXT',
           aspectRatio: '1:1',
           sampleCount: 1,
           safetySettings: {},
@@ -1606,14 +1606,16 @@ export const useChatStore = create((set, get) => ({
     }
     
     // For Nanobanana
-    if (config.outputType) {
+    // Use nullish coalescing for safe fallback
+    const outputType = config.outputType ?? 'TEXT';
+    if (outputType) {
       // Map Firestore outputType to API format
       const outputTypeMap = {
         'TEXT': 'text',
         'IMAGE': 'image',
         'TEXT+IMAGE': 'both'
       };
-      modelSettings.output_type = outputTypeMap[config.outputType] || config.outputType.toLowerCase();
+      modelSettings.output_type = outputTypeMap[outputType] || outputType.toLowerCase();
     }
     
     return Object.keys(modelSettings).length > 0 ? modelSettings : null;
@@ -1639,7 +1641,7 @@ export const useChatStore = create((set, get) => ({
           temperature: data.temperature ?? 0.7,
           topP: data.topP ?? 0.95,
           maxOutputTokens: data.maxOutputTokens ?? 8192,
-          outputType: data.outputType || 'TEXT',
+          outputType: data.outputType ?? 'TEXT',
           aspectRatio: data.aspectRatio || '1:1',
           sampleCount: data.sampleCount ?? 1,
           safetySettings: data.safetySettings || {},
