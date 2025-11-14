@@ -93,7 +93,7 @@ export const useChatStore = create((set, get) => ({
             role: data.sender === 'user' ? 'user' : 'assistant',
             sender: data.sender,
             timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-            model: data.model || 'gemini-2.5-flash'
+            model: data.model || DEFAULT_MODEL
           });
         } else {
           // Handle text messages (legacy structure)
