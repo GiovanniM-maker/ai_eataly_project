@@ -319,37 +319,33 @@ export const useChatStore = create((set, get) => ({
 
   /**
    * Send image message (user uploads image)
+   * Converts file to base64 and saves to Firestore
    */
   sendImageMessage: async (file) => {
-    const { sessionId } = get();
+    const { sessionId, selectedModel } = get();
     const tempMessageId = `temp-${Date.now()}`;
     
     try {
-      // Log original size
-      console.log('[IMG] Original size:', `${(file.size / 1024).toFixed(2)} KB`);
+      console.log('[Store] Processing user image upload...');
+      console.log('[Store] File size:', `${(file.size / 1024).toFixed(2)} KB`);
       
-      // Process image: resize, compress
-      console.log('[Store] Processing image (resize & compress)...');
-      const processed = await processImage(file, 1500);
-      
-      console.log('[IMG] Compressed size:', `${(processed.compressedSize / 1024).toFixed(2)} KB`);
-      
-      // Create preview from compressed blob
-      const localPreviewUrl = URL.createObjectURL(processed.blob);
-      
-      // Convert blob to File for upload
-      const compressedFile = new File([processed.blob], file.name || 'image.jpg', {
-        type: 'image/jpeg',
-        lastModified: Date.now()
+      // Convert file to base64 data URL
+      const base64DataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
       });
       
-      // Add user message with compressed preview immediately to UI
+      console.log('[Store] Image converted to base64, length:', base64DataUrl.length, 'characters');
+      
+      // Add user message with base64 immediately to UI
       const userMessage = {
         id: tempMessageId,
         type: 'image',
         role: 'user',
         sender: 'user',
-        localPreviewUrl,
+        base64: base64DataUrl,
         timestamp: Date.now()
       };
 
@@ -357,26 +353,12 @@ export const useChatStore = create((set, get) => ({
         messages: [...state.messages, userMessage]
       }));
 
-      // Upload compressed file to PostImages.org
-      console.log('[Store] Uploading compressed image to PostImages.org...');
-      const imageUrl = await get().uploadImageToPostImages(compressedFile);
+      console.log('[Store] Image message added to UI, rendering from base64');
 
-      // Update message with imageUrl and remove localPreviewUrl
-      set(state => ({
-        messages: state.messages.map(msg => 
-          msg.id === tempMessageId
-            ? { ...msg, url: imageUrl, localPreviewUrl: null }
-            : msg
-        )
-      }));
-
-      // Clean up local preview URL
-      URL.revokeObjectURL(localPreviewUrl);
-
-      // Save to Firestore with new structure (type: "image", url, sender)
+      // Save to Firestore with base64 (data URL format)
       try {
-        const { selectedModel } = get();
-        await get().saveMessageToFirestore('user', null, selectedModel, imageUrl);
+        await get().saveMessageToFirestore('user', null, selectedModel, base64DataUrl, 'image');
+        console.log('[Store] User image message saved to Firestore successfully with base64');
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for image message:', firestoreError);
         // Remove message from UI if Firestore save fails
@@ -386,7 +368,7 @@ export const useChatStore = create((set, get) => ({
         throw new Error('Failed to save image message to Firestore');
       }
 
-      console.log('[Store] Image message uploaded and saved successfully');
+      console.log('[Store] Image message saved successfully (base64 only, no external upload)');
       return true;
     } catch (error) {
       console.error('[Store] Error sending image message:', error);
