@@ -105,24 +105,28 @@ const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = nul
     output_type
   } = modelSettings || {};
 
-  // Build request body with config
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }]
-      }
-    ]
-  };
-
-  // Add system instruction (priority: modelSettings > Firestore config)
+  // Build contents array - system message FIRST, then user message
+  const contents = [];
+  
+  // Add system instruction as FIRST message in contents (priority: modelSettings > Firestore config)
   const systemPrompt = system || modelConfig?.systemPrompt;
-  if (systemPrompt) {
-    body.systemInstruction = {
+  if (systemPrompt && systemPrompt.trim() !== "") {
+    contents.push({
       role: 'system',
       parts: [{ text: systemPrompt }]
-    };
+    });
   }
+  
+  // Add user message
+  contents.push({
+    role: "user",
+    parts: [{ text: prompt }]
+  });
+
+  // Build request body
+  const body = {
+    contents: contents
+  };
 
   // Add generation config (only include defined fields)
   body.generationConfig = {};
@@ -159,6 +163,7 @@ const callNanobananaAPI = async (prompt, modelConfig = null, modelSettings = nul
 
   if (DEBUG_MODE) {
     console.log("[DEBUG] ============ PAYLOAD =============");
+    console.log("Final contents payload:", JSON.stringify(contents, null, 2));
     console.log(JSON.stringify(body, null, 2));
     console.log("[DEBUG] Output Type:", normalizedOutputType);
   }

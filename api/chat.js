@@ -137,24 +137,28 @@ const callGeminiAPI = async (model, message, modelConfig = null, modelSettings =
     max_output_tokens
   } = modelSettings || {};
 
-  // Build request body with config
-  const requestBody = {
-    contents: [
-      {
-        role: 'user',
-        parts: [{ text: message }]
-      }
-    ]
-  };
-
-  // Add system instruction (priority: modelSettings > Firestore config)
+  // Build contents array - system message FIRST, then user message
+  const contents = [];
+  
+  // Add system instruction as FIRST message in contents (priority: modelSettings > Firestore config)
   const systemPrompt = system || modelConfig?.systemPrompt;
-  if (systemPrompt) {
-    requestBody.systemInstruction = {
+  if (systemPrompt && systemPrompt.trim() !== "") {
+    contents.push({
       role: 'system',
       parts: [{ text: systemPrompt }]
-    };
+    });
   }
+  
+  // Add user message
+  contents.push({
+    role: 'user',
+    parts: [{ text: message }]
+  });
+
+  // Build request body
+  const requestBody = {
+    contents: contents
+  };
 
   // Add generation config (only include defined fields)
   requestBody.generationConfig = {};
@@ -178,6 +182,7 @@ const callGeminiAPI = async (model, message, modelConfig = null, modelSettings =
 
   if (DEBUG_MODE) {
     console.log("[DEBUG] ============ PAYLOAD =============");
+    console.log("Final contents payload:", JSON.stringify(contents, null, 2));
     console.log(JSON.stringify(requestBody, null, 2));
   }
 
