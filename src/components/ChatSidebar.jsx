@@ -287,7 +287,11 @@ const ChatSidebar = () => {
                     setEditTitle('');
                   }}
                   menuOpen={menuOpenId === chat.id}
-                  onMenuToggle={() => setMenuOpenId(menuOpenId === chat.id ? null : chat.id)}
+                  onMenuToggle={() => {
+                    const newMenuId = menuOpenId === chat.id ? null : chat.id;
+                    console.log('[SIDEBAR] Open menu ->', newMenuId);
+                    setMenuOpenId(newMenuId);
+                  }}
                   isPinned={false}
                   canMove={true}
                   />
