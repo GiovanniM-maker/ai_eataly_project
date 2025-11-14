@@ -1169,44 +1169,6 @@ export const useChatStore = create((set, get) => ({
           }
           throw error;
         }
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          let errorData;
-          try {
-            errorData = JSON.parse(errorText);
-          } catch {
-            errorData = { error: errorText || `HTTP ${response.status}` };
-          }
-          throw new Error(errorData.error || errorData.message || `API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        console.log('[Store] API response received:', data);
-
-        // Add assistant message to UI
-        const assistantMessage = {
-          id: `temp-${Date.now() + 1}`,
-          role: 'assistant',
-          content: data.reply || 'No response generated',
-          model: selectedModel,
-          messageType: 'text',
-          timestamp: Date.now()
-        };
-
-        set(state => ({
-          messages: [...state.messages, assistantMessage]
-        }));
-
-        // Save assistant message to Firestore (TEXT ONLY)
-        try {
-          await get().saveMessageWithoutImageToFirestore('assistant', data.reply || 'No response generated', selectedModel);
-          console.log('[Store] Text message saved to Firestore successfully');
-        } catch (firestoreError) {
-          console.warn('[Store] Firestore save failed for assistant message:', firestoreError);
-        }
-
-        return data.reply;
       }
     } catch (error) {
       console.error('[Store] Error sending message:', error);

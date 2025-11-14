@@ -297,7 +297,7 @@ const ChatUI = () => {
                 >
                   {/* Message Actions Bar (visible on hover) */}
                   {hoveredMessageId === message.id && (
-                    <div className="absolute -top-8 right-0 flex gap-1 bg-gray-900 rounded-lg px-2 py-1 border border-gray-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="absolute -top-8 right-0 flex gap-1 bg-gray-900 rounded-lg px-2 py-1 border border-gray-700 transition-opacity z-10">
                       {/* Copy Button (all messages) */}
                       {(message.content || message.base64) && (
                         <button
