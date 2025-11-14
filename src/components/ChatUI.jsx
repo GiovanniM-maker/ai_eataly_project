@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useChatStore } from '../store/chatStore';
+import { useChatStore, testFirestoreRead, testFirestoreWrite } from '../store/chatStore';
 
 /**
  * Minimal Chat UI Component
@@ -9,6 +9,7 @@ const ChatUI = () => {
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [firestoreStatus, setFirestoreStatus] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,6 +28,32 @@ const ChatUI = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleTestRead = async () => {
+    console.log('[UI] Testing Firestore Read...');
+    const result = await testFirestoreRead();
+    if (result) {
+      setFirestoreStatus('Firestore Read OK');
+      console.log('[UI] Firestore Read test: OK');
+    } else {
+      setFirestoreStatus('Firestore Read ERROR');
+      console.error('[UI] Firestore Read test: ERROR');
+    }
+    setTimeout(() => setFirestoreStatus(null), 3000);
+  };
+
+  const handleTestWrite = async () => {
+    console.log('[UI] Testing Firestore Write...');
+    const result = await testFirestoreWrite();
+    if (result) {
+      setFirestoreStatus('Firestore Write OK');
+      console.log('[UI] Firestore Write test: OK');
+    } else {
+      setFirestoreStatus('Firestore Write ERROR');
+      console.error('[UI] Firestore Write test: ERROR');
+    }
+    setTimeout(() => setFirestoreStatus(null), 3000);
   };
 
   return (
@@ -79,6 +106,32 @@ const ChatUI = () => {
               {error}
             </div>
           )}
+          {firestoreStatus && (
+            <div className={`mb-3 p-2 rounded text-sm ${
+              firestoreStatus.includes('OK') 
+                ? 'bg-green-900/50 border border-green-700 text-green-200' 
+                : 'bg-red-900/50 border border-red-700 text-red-200'
+            }`}>
+              {firestoreStatus}
+            </div>
+          )}
+          {/* Firestore Test Buttons */}
+          <div className="mb-3 flex gap-2">
+            <button
+              type="button"
+              onClick={handleTestRead}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors"
+            >
+              Test Read
+            </button>
+            <button
+              type="button"
+              onClick={handleTestWrite}
+              className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors"
+            >
+              Test Write
+            </button>
+          </div>
           <div className="flex gap-3">
             <input
               type="text"

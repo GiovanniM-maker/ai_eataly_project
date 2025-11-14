@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { collection, getDocs, addDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 /**
  * Minimal chat store
@@ -79,4 +81,39 @@ export const useChatStore = create((set, get) => ({
     set({ messages: [] });
   }
 }));
+
+/**
+ * Test Firestore Read
+ */
+export async function testFirestoreRead() {
+  try {
+    const querySnapshot = await getDocs(collection(db, "test"));
+    const documents = [];
+    querySnapshot.forEach((doc) => {
+      documents.push({ id: doc.id, ...doc.data() });
+    });
+    console.log('[Firestore] Read test - Documents:', documents);
+    return true;
+  } catch (error) {
+    console.error('[Firestore] Read test - ERROR:', error);
+    return false;
+  }
+}
+
+/**
+ * Test Firestore Write
+ */
+export async function testFirestoreWrite() {
+  try {
+    const docRef = await addDoc(collection(db, "test"), {
+      message: "hello",
+      ts: Date.now()
+    });
+    console.log('[Firestore] Write test - Document ID:', docRef.id);
+    return true;
+  } catch (error) {
+    console.error('[Firestore] Write test - ERROR:', error);
+    return false;
+  }
+}
 
