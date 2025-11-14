@@ -1,6 +1,5 @@
 import { createSign } from 'crypto';
 import { loadModelConfig } from './helpers/firestoreConfig.js';
-import { loadPipelineConfig } from './helpers/pipelineConfig.js';
 
 // CORS allowed origins
 const ALLOWED_ORIGINS = [
@@ -263,63 +262,11 @@ export default async function handler(req, res) {
       });
     }
 
-    // 1) Load pipeline config
-    const pipeline = await loadPipelineConfig();
-    console.log('[PIPELINE] CONFIG LOADED:', pipeline);
+    // Pipeline is now handled entirely in the frontend (chatStore.js)
+    // The backend just processes the message it receives (already preprocessed if pipeline was used)
+    const finalUserMessage = message;
     
-    // 2) Prepare user message
-    let finalUserMessage = message;
-    let preprocessedBy = null;
-    
-    // 3) If pipeline enabled → pre-process through preModel
-    if (pipeline.enabled && pipeline.preModel) {
-      console.log('[PIPELINE] Pre-model enabled');
-      console.log('[PIPELINE] Input → preModel:', message);
-      
-      // Build messages for pre-model
-      // Combine system instruction, extra prompt, and user message
-      let preMessageText = '';
-      
-      // Add system instruction if provided
-      if (pipeline.instructions && pipeline.instructions.trim() !== '') {
-        preMessageText += `<system_instruction>${pipeline.instructions}</system_instruction>\n\n`;
-      }
-      
-      // Add extra prompt if provided
-      if (pipeline.extraPrompt && pipeline.extraPrompt.trim() !== '') {
-        preMessageText += `${pipeline.extraPrompt}\n\n`;
-      }
-      
-      // Add user message
-      preMessageText += message;
-      
-      // Load pre-model config
-      const preModelConfig = await loadModelConfig(pipeline.preModel);
-      
-      // Build pre-model settings
-      const preModelSettings = {
-        temperature: pipeline.temperature,
-        top_p: pipeline.topP
-      };
-      
-      // Call pre-model API
-      const preprocessResult = await callModelAPI(
-        pipeline.preModel,
-        preMessageText,
-        preModelConfig,
-        preModelSettings,
-        DEBUG_MODE
-      );
-      
-      // Extract text from pre-model response
-      finalUserMessage = preprocessResult.candidates?.[0]?.content?.parts?.[0]?.text || message;
-      preprocessedBy = pipeline.preModel;
-      
-      console.log('[PIPELINE] Output ← preModel:', finalUserMessage);
-      console.log('[PIPELINE] Forwarding to main model');
-    }
-    
-    // 4) Load main model configuration from Firestore
+    // Load main model configuration from Firestore
     console.log('[API] Loading model config from Firestore...');
     const modelConfig = await loadModelConfig(model);
     
@@ -343,8 +290,7 @@ export default async function handler(req, res) {
     }
 
     const responseData = {
-      reply,
-      ...(preprocessedBy && { preprocessedBy }) // Include preprocessedBy if set
+      reply
     };
 
     if (DEBUG_MODE) {
