@@ -12,6 +12,7 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db, app } from '../config/firebase';
+import { processImage } from '../utils/imageProcessor';
 
 /**
  * Get or create session ID from localStorage
@@ -199,7 +200,7 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * Convert File to base64
+   * Convert File to base64 (legacy, use processImage instead)
    */
   fileToBase64: (file) => {
     return new Promise((resolve, reject) => {
@@ -244,10 +245,19 @@ export const useChatStore = create((set, get) => ({
     const tempMessageId = `temp-${Date.now()}`;
     
     try {
-      // Create local preview URL
-      const localPreviewUrl = URL.createObjectURL(file);
+      // Log original size
+      console.log('[IMG] Original size:', `${(file.size / 1024).toFixed(2)} KB`);
       
-      // Add user message with image preview immediately to UI
+      // Process image: resize, compress, convert to base64
+      console.log('[Store] Processing image (resize & compress)...');
+      const processed = await processImage(file, 1500);
+      
+      console.log('[IMG] Compressed size:', `${(processed.compressedSize / 1024).toFixed(2)} KB`);
+      
+      // Create preview from compressed blob
+      const localPreviewUrl = URL.createObjectURL(processed.blob);
+      
+      // Add user message with compressed preview immediately to UI
       const userMessage = {
         id: tempMessageId,
         role: 'user',
@@ -260,13 +270,9 @@ export const useChatStore = create((set, get) => ({
         messages: [...state.messages, userMessage]
       }));
 
-      // Convert file to base64
-      console.log('[Store] Converting file to base64...');
-      const base64 = await get().fileToBase64(file);
-
-      // Upload to ImgBB
-      console.log('[Store] Uploading image to ImgBB...');
-      const imageUrl = await get().uploadBase64ToUrl(base64);
+      // Upload compressed base64 to ImgBB
+      console.log('[Store] Uploading compressed image to ImgBB...');
+      const imageUrl = await get().uploadBase64ToUrl(processed.base64);
 
       // Update message with imageUrl and remove localPreviewUrl
       set(state => ({
@@ -354,9 +360,20 @@ export const useChatStore = create((set, get) => ({
         messages: [...state.messages, assistantMessage]
       }));
 
-      // Upload base64 to ImgBB
-      console.log('[Store] Uploading generated image to ImgBB...');
-      const imageUrl = await get().uploadBase64ToUrl(data.imageBase64);
+      // Process and compress generated image before upload
+      console.log('[Store] Processing generated image (resize & compress)...');
+      
+      // Convert base64 to Blob for processing
+      const base64Response = await fetch(`data:image/png;base64,${data.imageBase64}`);
+      const blob = await base64Response.blob();
+      const file = new File([blob], 'generated-image.png', { type: 'image/png' });
+      
+      const processed = await processImage(file, 1500);
+      console.log('[IMG] Generated image - Original:', `${(blob.size / 1024).toFixed(2)} KB`, 'Compressed:', `${(processed.compressedSize / 1024).toFixed(2)} KB`);
+      
+      // Upload compressed base64 to ImgBB
+      console.log('[Store] Uploading compressed generated image to ImgBB...');
+      const imageUrl = await get().uploadBase64ToUrl(processed.base64);
 
       // Update message with imageUrl and remove imageBase64
       set(state => ({
