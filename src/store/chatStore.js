@@ -802,7 +802,7 @@ export const useChatStore = create((set, get) => ({
    */
   saveImageToStorage: async (imageBase64, userId, chatId, messageId = null) => {
     if (!storage) {
-      console.warn('[Store] Firebase Storage not available');
+      console.warn('[Store] saveImageToStorage: storage not initialized, aborting upload');
       return null;
     }
 
@@ -832,7 +832,7 @@ export const useChatStore = create((set, get) => ({
       const timestamp = messageId ? messageId.replace('temp-', '') : Date.now();
       const storagePath = `users/${userId}/chats/${chatId}/${timestamp}.${extension}`;
       
-      console.log('[Store] Uploading image to Storage:', storagePath);
+      console.log('[Store] Uploading image to Storage:', storagePath, 'mimeType:', mimeType, 'size:', bytes.length, 'bytes');
       
       // Create storage reference
       const storageRef = ref(storage, storagePath);
@@ -848,7 +848,12 @@ export const useChatStore = create((set, get) => ({
       console.log('[Store] Image uploaded successfully to Storage:', downloadURL);
       return downloadURL;
     } catch (error) {
-      console.warn('[Store] Error uploading image to Storage:', error);
+      console.warn('[Store] saveImageToStorage ERROR:', {
+        path: `users/${userId}/chats/${chatId}/${messageId ? messageId.replace('temp-', '') : 'unknown'}`,
+        mimeType: imageBase64.match(/^data:([^;]+);base64/)?.[1] || 'unknown',
+        message: error.message,
+        code: error.code
+      });
       return null;
     }
   },
@@ -1104,7 +1109,22 @@ export const useChatStore = create((set, get) => ({
           const { activeChatId, sessionId } = get();
           const chatId = activeChatId || sessionId;
           
-          if (chatId) {
+          // Debug logging before upload attempt
+          console.log('[DEBUG] activeChatId:', activeChatId);
+          console.log('[DEBUG] sessionId:', sessionId);
+          console.log('[DEBUG] chatId used:', chatId);
+          console.log('[Store] Nanobanana upload:', { 
+            case: 'TEXT+IMAGE', 
+            userId, 
+            chatId, 
+            hasText: !!hasText,
+            imageDataUrlLength: imageDataUrl.length 
+          });
+          
+          if (!userId || !chatId) {
+            console.warn('[Store] Nanobanana image NOT uploaded: missing userId or chatId', { userId: !!userId, chatId: !!chatId });
+            // Continue to show image in UI (base64), but don't save to Firestore
+          } else {
             const downloadURL = await get().saveImageToStorage(imageDataUrl, userId, chatId, `${tempMessageId}-img`);
             
             if (downloadURL) {
@@ -1112,7 +1132,7 @@ export const useChatStore = create((set, get) => ({
               await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', null, null, downloadURL);
               console.log('[Store] Image saved to Firestore with Storage URL');
             } else {
-              console.warn('[Store] Image upload to Storage failed, skipping Firestore save to avoid 1MB limit');
+              console.warn('[Store] Nanobanana image upload FAILED, no downloadURL. Skipping Firestore save.');
             }
           }
         } catch (firestoreError) {
@@ -1177,7 +1197,21 @@ export const useChatStore = create((set, get) => ({
           const { activeChatId, sessionId } = get();
           const chatId = activeChatId || sessionId;
           
-          if (chatId) {
+          // Debug logging before upload attempt
+          console.log('[DEBUG] activeChatId:', activeChatId);
+          console.log('[DEBUG] sessionId:', sessionId);
+          console.log('[DEBUG] chatId used:', chatId);
+          console.log('[Store] Nanobanana upload:', { 
+            case: 'IMAGE only', 
+            userId, 
+            chatId, 
+            imageDataUrlLength: imageDataUrl.length 
+          });
+          
+          if (!userId || !chatId) {
+            console.warn('[Store] Nanobanana image NOT uploaded: missing userId or chatId', { userId: !!userId, chatId: !!chatId });
+            // Continue to show image in UI (base64), but don't save to Firestore
+          } else {
             const downloadURL = await get().saveImageToStorage(imageDataUrl, userId, chatId, tempMessageId);
             
             if (downloadURL) {
@@ -1185,7 +1219,7 @@ export const useChatStore = create((set, get) => ({
               await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', null, null, downloadURL);
               console.log('[Store] Image saved to Firestore with Storage URL');
             } else {
-              console.warn('[Store] Image upload to Storage failed, skipping Firestore save to avoid 1MB limit');
+              console.warn('[Store] Nanobanana image upload FAILED, no downloadURL. Skipping Firestore save.');
             }
           }
         } catch (firestoreError) {
