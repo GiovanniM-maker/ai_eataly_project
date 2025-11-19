@@ -520,13 +520,15 @@ export const useChatStore = create((set, get) => ({
         const data = doc.data();
         
         // Handle different message types with backwards compatibility
-        // NOTE: Images are NOT loaded from Firestore (cache-only mode)
-        // Only text messages are persisted
-        
+        // Load image messages ONLY if they have valid base64 data
+        // This maintains backwards compatibility: legacy image messages without base64 are skipped
         if (data.type === 'image') {
-          // Skip image messages - they are cache-only
-          console.log('[Store] Skipping image message from Firestore (cache-only mode)');
-          return;
+          if (!data.base64 || typeof data.base64 !== 'string' || data.base64.trim() === '') {
+            // Skip legacy image messages without base64 (backwards compatible)
+            console.log('[Store] Skipping image message without base64 data (legacy)');
+            return;
+          }
+          // Continue to load image message with base64
         }
         
         // Unified schema with backwards compatibility
@@ -631,12 +633,14 @@ export const useChatStore = create((set, get) => ({
               const data = change.doc.data();
               
               // Handle different message types with backwards compatibility
-              // NOTE: Images are NOT loaded from Firestore (cache-only mode)
-              
+              // Load image messages ONLY if they have valid base64 data (same logic as loadMessages)
               if (data.type === 'image') {
-                // Skip image messages - they are cache-only
-                console.log('[Store] Skipping image message from realtime update (cache-only mode)');
-                return;
+                if (!data.base64 || typeof data.base64 !== 'string' || data.base64.trim() === '') {
+                  // Skip legacy image messages without base64 (backwards compatible)
+                  console.log('[Store] Skipping image message without base64 data in realtime (legacy)');
+                  return;
+                }
+                // Continue to load image message with base64
               }
               
               // Unified schema with backwards compatibility
@@ -1296,6 +1300,27 @@ export const useChatStore = create((set, get) => ({
         get().setAbortController(controller);
         get().setIsGenerating(true);
         
+        // Build conversation history from current messages in store (SAFE MODE - Option C: text only)
+        const { messages } = get();
+        const conversationHistory = messages
+          .filter(msg => {
+            // Include only text messages with content
+            if (msg.type === 'text' && msg.content && msg.content.trim() !== '') {
+              return true;
+            }
+            // Include vision/audio messages (they have text content)
+            if ((msg.type === 'vision' || msg.type === 'audio') && msg.content && msg.content.trim() !== '') {
+              return true;
+            }
+            // SKIP image messages in context (SAFE MODE - Option C)
+            return false;
+          })
+          .map(msg => ({
+            role: msg.role,
+            content: msg.content,
+            type: msg.type
+          }));
+        
         try {
           const response = await fetch(apiUrl, {
             method: 'POST',
@@ -1305,6 +1330,7 @@ export const useChatStore = create((set, get) => ({
             signal: controller.signal,
             body: JSON.stringify({
               message: finalUserMessage, // Use preprocessed message if pipeline was used
+              conversationHistory: conversationHistory.length > 0 ? conversationHistory : undefined, // Optional field
               model: config.googleModel,
               ...(modelSettings && { modelSettings }),
               ...(attachments.length > 0 && { attachments }),

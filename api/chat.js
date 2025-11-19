@@ -114,7 +114,7 @@ const getAccessToken = async () => {
  * Call Google Gemini API (REST API v1)
  * Generic function that can be used for both pre-model and main model
  */
-const callModelAPI = async (model, message, modelConfig = null, modelSettings = null, debugMode = false) => {
+const callModelAPI = async (model, message, modelConfig = null, modelSettings = null, debugMode = false, conversationHistory = []) => {
   const accessToken = await getAccessToken();
   
   // Gemini 2.x models use v1 API
@@ -127,6 +127,7 @@ const callModelAPI = async (model, message, modelConfig = null, modelSettings = 
     console.log("[DEBUG] ============ GEMINI API CALL =============");
     console.log("[DEBUG] Model:", model);
     console.log("[DEBUG] Endpoint:", endpoint);
+    console.log("[DEBUG] Conversation history length:", conversationHistory?.length || 0);
   }
 
   // Extract modelSettings (override Firestore config if provided)
@@ -140,8 +141,30 @@ const callModelAPI = async (model, message, modelConfig = null, modelSettings = 
   // Get system instruction (priority: modelSettings > Firestore config)
   const systemPrompt = system || modelConfig?.systemPrompt;
   
-  // Build contents array - Gemini ONLY accepts "user" or "model" roles
+  // Build contents array with conversation history (if provided)
+  // Gemini ONLY accepts "user" or "model" roles
   // System instructions are embedded in the user message text (NO XML tags, NO system role)
+  const contents = [];
+  
+  // Add conversation history (backwards compatible: empty array if not provided)
+  if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
+    conversationHistory.forEach((msg) => {
+      // Skip current message (will be added at the end)
+      if (msg.content === message && msg.role === 'user') {
+        return;
+      }
+      
+      // Only add text content (SAFE MODE - Option C: no images in context)
+      if (msg.content && msg.content.trim() !== '') {
+        contents.push({
+          role: msg.role === 'user' ? 'user' : 'model',
+          parts: [{ text: msg.content }]
+        });
+      }
+    });
+  }
+  
+  // Prepare current user message text
   let userMessageText = message;
   
   if (systemPrompt && systemPrompt.trim() !== "") {
@@ -149,12 +172,11 @@ const callModelAPI = async (model, message, modelConfig = null, modelSettings = 
     userMessageText = `${systemPrompt}\n\n${message}`;
   }
   
-  const contents = [
-    {
-      role: 'user', // ONLY valid roles: "user" or "model"
-      parts: [{ text: userMessageText }]
-    }
-  ];
+  // Add current user message at the end
+  contents.push({
+    role: 'user', // ONLY valid roles: "user" or "model"
+    parts: [{ text: userMessageText }]
+  });
 
   // Build request body
   const requestBody = {
@@ -240,7 +262,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { message, model: requestedModel, modelSettings, debugMode: requestDebugMode } = req.body;
+    const { message, conversationHistory, model: requestedModel, modelSettings, debugMode: requestDebugMode } = req.body;
     const DEBUG_MODE = process.env.DEBUG_MODE === "true" || requestDebugMode === true;
     
     if (DEBUG_MODE) {
@@ -266,6 +288,9 @@ export default async function handler(req, res) {
     // The backend just processes the message it receives (already preprocessed if pipeline was used)
     const finalUserMessage = message;
     
+    // conversationHistory is optional - if not provided, use empty array (backwards compatible)
+    const history = Array.isArray(conversationHistory) ? conversationHistory : [];
+    
     // Load main model configuration from Firestore
     console.log('[API] Loading model config from Firestore...');
     const modelConfig = await loadModelConfig(model);
@@ -277,9 +302,9 @@ export default async function handler(req, res) {
       });
     }
 
-    // 5) Call main model API with processed message
-    console.log('[API] Calling main model API:', { model, messageLength: finalUserMessage.length });
-    const result = await callModelAPI(model, finalUserMessage, modelConfig, modelSettings, DEBUG_MODE);
+    // 5) Call main model API with processed message and conversation history
+    console.log('[API] Calling main model API:', { model, messageLength: finalUserMessage.length, historyLength: history.length });
+    const result = await callModelAPI(model, finalUserMessage, modelConfig, modelSettings, DEBUG_MODE, history);
 
     // Extract reply from response
     const reply =
