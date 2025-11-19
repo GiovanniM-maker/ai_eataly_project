@@ -1036,6 +1036,13 @@ export const useChatStore = create((set, get) => ({
           console.warn('[Store] Firestore save failed for assistant text:', firestoreError);
         }
         
+        // Save image to Firestore
+        try {
+          await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', imageDataUrl, null);
+        } catch (firestoreError) {
+          console.warn('[Store] Firestore save failed for assistant image:', firestoreError);
+        }
+        
         console.log('[Store] TEXT+IMAGE messages added to UI');
         return imageDataUrl;
       } else if (hasText) {
@@ -1087,8 +1094,15 @@ export const useChatStore = create((set, get) => ({
           messages: [...state.messages, assistantMessage]
         }));
 
+        // Save image to Firestore
+        try {
+          await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', imageDataUrl, null);
+        } catch (firestoreError) {
+          console.warn('[Store] Firestore save failed for assistant image:', firestoreError);
+        }
+
         console.log('[Store] Image message added to UI, rendering from base64');
-        console.log('[Store] Image saved in local cache (NOT persisted).');
+        console.log('[Store] Image saved to Firestore with base64 data.');
 
         return imageDataUrl;
       } else {
