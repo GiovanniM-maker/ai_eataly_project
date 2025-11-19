@@ -19,12 +19,12 @@ export function resolveModelConfig(modelName) {
   // ONLY 2 MODELS SUPPORTED
   const models = {
     // Text model - Google REST API
-    'gemini-2.5-flash-preview-09-2025': {
-      name: 'gemini-2.5-flash-preview-09-2025',
+    'gemini-2.5-flash': {
+      name: 'gemini-2.5-flash',
       type: 'text',
       provider: 'google-text',
       endpoint: '/api/chat',
-      googleModel: 'gemini-2.5-flash-preview-09-2025'
+      googleModel: 'gemini-2.5-flash'
     },
     
     // Image model - Vertex AI Gemini (Nanobanana)
@@ -40,8 +40,8 @@ export function resolveModelConfig(modelName) {
   const config = models[normalizedModel];
   
   if (!config) {
-    console.warn(`[ModelRouter] Unknown model "${modelName}", defaulting to gemini-2.5-flash-preview-09-2025`);
-    return models['gemini-2.5-flash-preview-09-2025'];
+    console.warn(`[ModelRouter] Unknown model "${modelName}", defaulting to gemini-2.5-flash`);
+    return models['gemini-2.5-flash'];
   }
 
   return {

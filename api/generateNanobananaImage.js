@@ -387,7 +387,7 @@ export default async function handler(req, res) {
     
     if (modelToUse.toLowerCase() !== 'gemini-2.5-flash-image') {
       return res.status(400).json({ 
-        error: `Wrong endpoint: model "${modelToUse}" is not supported. This endpoint only accepts "gemini-2.5-flash-image". Use /api/chat for gemini-2.5-flash-preview-09-2025.` 
+        error: `Wrong endpoint: model "${modelToUse}" is not supported. This endpoint only accepts "gemini-2.5-flash-image". Use /api/chat for gemini-2.5-flash.` 
       });
     }
 

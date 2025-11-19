@@ -5,7 +5,7 @@
 import { MODEL_CAPABILITIES } from '../lib/modelCapabilities.js';
 
 export const MODEL_INFO = {
-  "gemini-2.5-flash-preview-09-2025": "Gemini 2.5 Flash Preview: modello avanzato per generazione testo, multimodale, ottimo per task generali con buon tradeoff tra qualità e velocità.",
+  "gemini-2.5-flash": "Gemini 2.5 Flash: modello avanzato per generazione testo, multimodale, ottimo per task generali con buon tradeoff tra qualità e velocità.",
   "gemini-2.5-flash-image": "Nano Banana: modello per generazione immagini tramite Vertex AI. Genera immagini da prompt testuali."
 };
 
@@ -13,14 +13,14 @@ export const MODEL_INFO = {
  * All available models (2 models only)
  */
 export const ALL_MODELS = [
-  "gemini-2.5-flash-preview-09-2025",
+  "gemini-2.5-flash",
   "gemini-2.5-flash-image"
 ];
 
 /**
  * Default model
  */
-export const DEFAULT_MODEL = "gemini-2.5-flash-preview-09-2025";
+export const DEFAULT_MODEL = "gemini-2.5-flash";
 
 /**
  * Get model display name
@@ -31,7 +31,7 @@ export const getModelDisplayName = (model) => {
     return capabilities.label;
   }
   const names = {
-    "gemini-2.5-flash-preview-09-2025": "Gemini 2.5 Flash Preview",
+    "gemini-2.5-flash": "Gemini 2.5 Flash",
     "gemini-2.5-flash-image": "Nano Banana"
   };
   return names[model] || model;

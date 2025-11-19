@@ -253,12 +253,12 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing or invalid "message" field' });
     }
 
-    // ONLY allow gemini-2.5-flash-preview-09-2025 (text model)
-    const model = requestedModel || "gemini-2.5-flash-preview-09-2025";
+    // ONLY allow gemini-2.5-flash (text model)
+    const model = requestedModel || "gemini-2.5-flash";
     
-    if (model.toLowerCase() !== 'gemini-2.5-flash-preview-09-2025') {
+    if (model.toLowerCase() !== 'gemini-2.5-flash') {
       return res.status(400).json({ 
-        error: `Wrong endpoint: model "${model}" is not supported. This endpoint only accepts "gemini-2.5-flash-preview-09-2025" (text model). Use /api/generateNanobananaImage for gemini-2.5-flash-image.` 
+        error: `Wrong endpoint: model "${model}" is not supported. This endpoint only accepts "gemini-2.5-flash" (text model). Use /api/generateNanobananaImage for gemini-2.5-flash-image.` 
       });
     }
 

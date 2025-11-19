@@ -20,7 +20,8 @@ const getUserId = () => {
  */
 const getPipelineRef = (chatId) => {
   const userId = getUserId();
-  return doc(db, 'users', userId, 'chats', chatId, 'pipeline');
+  // TODO: Firestore rules must allow read/write for this path.
+  return doc(db, 'users', userId, 'chats', chatId, 'pipeline', 'config');
 };
 
 /**

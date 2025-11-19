@@ -7,7 +7,7 @@ export const MODEL_CAPABILITIES = {
   // ============================================================
   // TEXT MODEL — Gemini 2.5 Flash Preview
   // ============================================================
-  "gemini-2.5-flash-preview-09-2025": {
+  "gemini-2.5-flash": {
     label: "Gemini 2.5 Flash Preview (Testo)",
     type: "text",
     options: {
