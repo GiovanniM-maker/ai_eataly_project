@@ -282,7 +282,16 @@ export default async function handler(req, res) {
     const result = await callModelAPI(model, finalUserMessage, modelConfig, modelSettings, DEBUG_MODE);
 
     // Extract reply from response
-    const reply = result.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
+    const reply =
+      result.candidates?.[0]?.content?.parts?.find(p => p.text)?.text ||
+      'No response generated';
+
+    if (!reply || reply === 'No response generated') {
+      console.error(
+        '[API] Failed to extract text from response. Structure:',
+        JSON.stringify(result, null, 2)
+      );
+    }
 
     if (DEBUG_MODE) {
       console.log("[DEBUG] ============ EXTRACTED TEXT =========");
