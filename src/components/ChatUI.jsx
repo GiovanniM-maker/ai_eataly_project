@@ -536,15 +536,15 @@ const ChatUI = () => {
                       )
                     )}
                     
-                    {/* Image messages: type === "image" with base64 */}
-                    {message.type === 'image' && message.base64 && (
+                    {/* Image messages: type === "image" with imageUrl or base64 */}
+                    {message.type === 'image' && (message.imageUrl || message.base64) && (
                       <img
-                        src={message.base64}
+                        src={message.imageUrl || message.base64}
                         alt={message.role === 'user' ? 'Uploaded image' : 'Generated image'}
                         className="max-w-full rounded-lg mt-2"
                         style={{ maxWidth: '100%', height: 'auto', borderRadius: '12px' }}
-                        onLoad={() => console.log('[UI] Image rendered successfully from base64')}
-                        onError={(e) => console.error('[UI] Error rendering image from base64:', e)}
+                        onLoad={() => console.log('[UI] Image rendered successfully from', message.imageUrl ? 'Storage URL' : 'base64')}
+                        onError={(e) => console.error('[UI] Error rendering image:', e)}
                       />
                     )}
                   </div>

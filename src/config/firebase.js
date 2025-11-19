@@ -1,5 +1,6 @@
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, setLogLevel } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 // Firebase configuration from environment variables
 const firebaseConfig = {
@@ -74,4 +75,19 @@ try {
 }
 
 export { db };
+
+// Initialize Firebase Storage only if app is valid
+let storage;
+try {
+  if (app && app.name !== 'dummy-app') {
+    storage = getStorage(app);
+    console.log("✅ Firebase Storage initialized successfully");
+  } else {
+    console.warn("⚠️ Firebase Storage not initialized - using dummy Firebase app");
+  }
+} catch (error) {
+  console.error("❌ Firebase Storage initialization error:", error);
+}
+
+export { storage };
 

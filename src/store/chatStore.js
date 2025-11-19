@@ -20,7 +20,8 @@ import {
   setDoc,
   Timestamp
 } from 'firebase/firestore';
-import { db, app } from '../config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, app, storage } from '../config/firebase';
 import { DEFAULT_MODEL } from '../constants/models';
 import { resolveModelConfig } from '../lib/modelRouter';
 import { loadPipelineConfig as loadChatPipelineConfig, savePipelineConfig as saveChatPipelineConfig } from '../lib/pipelineConfig';
@@ -520,15 +521,18 @@ export const useChatStore = create((set, get) => ({
         const data = doc.data();
         
         // Handle different message types with backwards compatibility
-        // Load image messages ONLY if they have valid base64 data
-        // This maintains backwards compatibility: legacy image messages without base64 are skipped
+        // Load image messages if they have valid imageUrl OR base64 data
+        // This maintains backwards compatibility: legacy image messages with base64 continue to work
         if (data.type === 'image') {
-          if (!data.base64 || typeof data.base64 !== 'string' || data.base64.trim() === '') {
-            // Skip legacy image messages without base64 (backwards compatible)
-            console.log('[Store] Skipping image message without base64 data (legacy)');
+          const hasImageUrl = data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.trim() !== '';
+          const hasBase64 = data.base64 && typeof data.base64 === 'string' && data.base64.trim() !== '';
+          
+          if (!hasImageUrl && !hasBase64) {
+            // Skip image messages without either imageUrl or base64 (corrupted/legacy)
+            console.log('[Store] Skipping image message without imageUrl or base64 data');
             return;
           }
-          // Continue to load image message with base64
+          // Continue to load image message with imageUrl or base64
         }
         
         // Unified schema with backwards compatibility
@@ -569,12 +573,14 @@ export const useChatStore = create((set, get) => ({
         }
         
         // Build unified message structure
+        // For images: prefer imageUrl over base64 (new standard), fallback to base64 for legacy
         const message = {
           id: doc.id,
           role: role,
           type: messageType,
           content: content,
-          base64: data.base64 || null,
+          base64: data.imageUrl || data.base64 || null, // imageUrl can be used as src in UI
+          imageUrl: data.imageUrl || null, // Keep explicit imageUrl field for clarity
           attachments: data.attachments || null,
           model: data.model || DEFAULT_MODEL,
           messageType: data.messageType || messageType, // Always replicate type
@@ -633,14 +639,17 @@ export const useChatStore = create((set, get) => ({
               const data = change.doc.data();
               
               // Handle different message types with backwards compatibility
-              // Load image messages ONLY if they have valid base64 data (same logic as loadMessages)
+              // Load image messages if they have valid imageUrl OR base64 data (same logic as loadMessages)
               if (data.type === 'image') {
-                if (!data.base64 || typeof data.base64 !== 'string' || data.base64.trim() === '') {
-                  // Skip legacy image messages without base64 (backwards compatible)
-                  console.log('[Store] Skipping image message without base64 data in realtime (legacy)');
+                const hasImageUrl = data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.trim() !== '';
+                const hasBase64 = data.base64 && typeof data.base64 === 'string' && data.base64.trim() !== '';
+                
+                if (!hasImageUrl && !hasBase64) {
+                  // Skip image messages without either imageUrl or base64 (corrupted/legacy)
+                  console.log('[Store] Skipping image message without imageUrl or base64 data in realtime');
                   return;
                 }
-                // Continue to load image message with base64
+                // Continue to load image message with imageUrl or base64
               }
               
               // Unified schema with backwards compatibility
@@ -681,12 +690,14 @@ export const useChatStore = create((set, get) => ({
               }
               
               // Build unified message structure
+              // For images: prefer imageUrl over base64 (new standard), fallback to base64 for legacy
               const newMessage = {
                 id: change.doc.id,
                 role: role,
                 type: messageType,
                 content: content,
-                base64: data.base64 || null,
+                base64: data.imageUrl || data.base64 || null, // imageUrl can be used as src in UI
+                imageUrl: data.imageUrl || null, // Keep explicit imageUrl field for clarity
                 attachments: data.attachments || null,
                 model: data.model || DEFAULT_MODEL,
                 messageType: data.messageType || messageType, // Always replicate type
@@ -739,7 +750,7 @@ export const useChatStore = create((set, get) => ({
    * Save message to Firestore (TEXT ONLY - images are NOT persisted)
    * Images are stored only in local cache (Zustand state)
    */
-  saveMessageWithoutImageToFirestore: async (role, text, model = DEFAULT_MODEL, metadata = null, type = 'text', base64 = null, attachments = null) => {
+  saveMessageWithoutImageToFirestore: async (role, text, model = DEFAULT_MODEL, metadata = null, type = 'text', base64 = null, attachments = null, imageUrl = null) => {
     const { activeChatId, sessionId } = get();
     const chatId = activeChatId || sessionId;
     
@@ -764,7 +775,11 @@ export const useChatStore = create((set, get) => ({
         timestamp: Date.now(), // UI-friendly timestamp
         createdAt: serverTimestamp(), // Keep for backwards compatibility
         // Optional fields
-        ...(base64 && { base64 }),
+        // For images: prefer imageUrl over base64 (new standard)
+        // If imageUrl is present, don't save base64 to avoid 1MB limit
+        // If only base64 is present (legacy), save it for backwards compatibility
+        ...(imageUrl && { imageUrl }),
+        ...(base64 && !imageUrl && { base64 }), // Only save base64 if imageUrl is not present
         ...(attachments && attachments.length > 0 && { attachments }),
         ...(metadata && Object.keys(metadata).length > 0 && { metadata })
       };
@@ -781,14 +796,61 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
-   * Save image to Firebase Storage (STUB - to be implemented tomorrow)
-   * For now, images are stored only in local cache
+   * Save image to Firebase Storage
+   * Converts base64 data URL to Blob and uploads to Storage
+   * Returns downloadURL or null on error
    */
-  saveImageToStorage: async (imageBase64, messageId) => {
-    // TODO: Implement Firebase Storage upload tomorrow
-    console.log('[Store] saveImageToStorage() called but not implemented yet');
-    console.log('[Store] Image saved in local cache (NOT persisted).');
-    return null;
+  saveImageToStorage: async (imageBase64, userId, chatId, messageId = null) => {
+    if (!storage) {
+      console.warn('[Store] Firebase Storage not available');
+      return null;
+    }
+
+    try {
+      // Extract mime type and base64 data from data URL
+      // Format: "data:image/png;base64,iVBORw0KGgo..."
+      const matches = imageBase64.match(/^data:([^;]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        console.warn('[Store] Invalid base64 data URL format');
+        return null;
+      }
+
+      const mimeType = matches[1]; // e.g., "image/png"
+      const base64Data = matches[2]; // actual base64 string
+
+      // Convert base64 to Uint8Array
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      // Determine file extension from mime type
+      const extension = mimeType.split('/')[1] || 'png';
+      
+      // Generate storage path: users/{userId}/chats/{chatId}/{timestamp}.{ext}
+      const timestamp = messageId ? messageId.replace('temp-', '') : Date.now();
+      const storagePath = `users/${userId}/chats/${chatId}/${timestamp}.${extension}`;
+      
+      console.log('[Store] Uploading image to Storage:', storagePath);
+      
+      // Create storage reference
+      const storageRef = ref(storage, storagePath);
+      
+      // Upload bytes
+      await uploadBytes(storageRef, bytes, {
+        contentType: mimeType
+      });
+      
+      // Get download URL
+      const downloadURL = await getDownloadURL(storageRef);
+      
+      console.log('[Store] Image uploaded successfully to Storage:', downloadURL);
+      return downloadURL;
+    } catch (error) {
+      console.warn('[Store] Error uploading image to Storage:', error);
+      return null;
+    }
   },
 
   /**
@@ -1036,9 +1098,23 @@ export const useChatStore = create((set, get) => ({
           console.warn('[Store] Firestore save failed for assistant text:', firestoreError);
         }
         
-        // Save image to Firestore
+        // Upload image to Firebase Storage and save URL to Firestore
         try {
-          await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', imageDataUrl, null);
+          const userId = getUserId();
+          const { activeChatId, sessionId } = get();
+          const chatId = activeChatId || sessionId;
+          
+          if (chatId) {
+            const downloadURL = await get().saveImageToStorage(imageDataUrl, userId, chatId, `${tempMessageId}-img`);
+            
+            if (downloadURL) {
+              // Save image message with imageUrl (NOT base64) to Firestore
+              await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', null, null, downloadURL);
+              console.log('[Store] Image saved to Firestore with Storage URL');
+            } else {
+              console.warn('[Store] Image upload to Storage failed, skipping Firestore save to avoid 1MB limit');
+            }
+          }
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed for assistant image:', firestoreError);
         }
@@ -1077,6 +1153,7 @@ export const useChatStore = create((set, get) => ({
         // IMAGE only mode (unified schema)
         const imageDataUrl = `data:image/png;base64,${imageBase64}`;
         
+        // Keep base64 in UI for immediate display
         const assistantMessage = {
           id: tempMessageId,
           role: 'assistant',
@@ -1094,15 +1171,28 @@ export const useChatStore = create((set, get) => ({
           messages: [...state.messages, assistantMessage]
         }));
 
-        // Save image to Firestore
+        // Upload image to Firebase Storage and save URL to Firestore
         try {
-          await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', imageDataUrl, null);
+          const userId = getUserId();
+          const { activeChatId, sessionId } = get();
+          const chatId = activeChatId || sessionId;
+          
+          if (chatId) {
+            const downloadURL = await get().saveImageToStorage(imageDataUrl, userId, chatId, tempMessageId);
+            
+            if (downloadURL) {
+              // Save image message with imageUrl (NOT base64) to Firestore
+              await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', null, null, downloadURL);
+              console.log('[Store] Image saved to Firestore with Storage URL');
+            } else {
+              console.warn('[Store] Image upload to Storage failed, skipping Firestore save to avoid 1MB limit');
+            }
+          }
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed for assistant image:', firestoreError);
         }
 
         console.log('[Store] Image message added to UI, rendering from base64');
-        console.log('[Store] Image saved to Firestore with base64 data.');
 
         return imageDataUrl;
       } else {
