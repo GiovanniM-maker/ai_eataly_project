@@ -469,8 +469,8 @@ const ChatUI = () => {
 
                   {/* Content wrapper */}
                   <div className="flex-1 pl-3">
-                    {/* Pre-processed badge */}
-                    {message.preprocessedBy && (
+                    {/* Pre-processed badge (backwards compatible: check metadata.preprocessedBy or legacy preprocessedBy) */}
+                    {(message.metadata?.preprocessedBy || message.preprocessedBy) && (
                       <div className="mb-2">
                         <span 
                           className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium"
@@ -480,13 +480,13 @@ const ChatUI = () => {
                           }}
                         >
                           <Workflow size={11} strokeWidth={1.5} />
-                          Pre-processato da {getModelDisplayName(message.preprocessedBy)}
+                          Pre-processato da {getModelDisplayName(message.metadata?.preprocessedBy || message.preprocessedBy)}
                         </span>
                       </div>
                     )}
                     
                     {/* Model label (if different from selected) */}
-                    {message.model && message.model !== selectedModel && !message.preprocessedBy && (
+                    {message.model && message.model !== selectedModel && !(message.metadata?.preprocessedBy || message.preprocessedBy) && (
                       <div className="mb-2">
                         <span className="text-xs text-text-muted italic">
                           Model: {getModelDisplayName(message.model)}

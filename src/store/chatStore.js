@@ -519,48 +519,68 @@ export const useChatStore = create((set, get) => ({
       querySnapshot.forEach((doc) => {
         const data = doc.data();
         
-        // Handle different message types
+        // Handle different message types with backwards compatibility
         // NOTE: Images are NOT loaded from Firestore (cache-only mode)
         // Only text messages are persisted
+        
         if (data.type === 'image') {
           // Skip image messages - they are cache-only
           console.log('[Store] Skipping image message from Firestore (cache-only mode)');
           return;
-        } else if (data.type === 'vision') {
-          loadedMessages.push({
-            id: doc.id,
-            type: 'vision',
-            role: data.sender === 'user' ? 'user' : 'assistant',
-            sender: data.sender,
-            content: data.analysis || '',
-            messageType: 'vision',
-            timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-            model: data.model || DEFAULT_MODEL
-          });
-        } else if (data.type === 'audio') {
-          loadedMessages.push({
-            id: doc.id,
-            type: 'audio',
-            role: data.sender === 'user' ? 'user' : 'assistant',
-            sender: data.sender,
-            content: data.transcript || '',
-            audioUrl: data.audioUrl || null,
-            messageType: 'audio',
-            timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-            model: data.model || DEFAULT_MODEL
-          });
-        } else {
-          // Handle text messages (legacy structure)
-          loadedMessages.push({
-            id: doc.id,
-            role: data.role,
-            content: data.text || '',
-            imageUrl: data.imageUrl || null, // Legacy support
-            messageType: 'text',
-            timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-            model: data.model || DEFAULT_MODEL
-          });
         }
+        
+        // Unified schema with backwards compatibility
+        // Determine type (backwards compatible: default to 'text' if missing)
+        const messageType = data.type || 'text';
+        
+        // Extract content (backwards compatible: text → content)
+        let content = data.content || data.text || '';
+        
+        // Extract timestamp (backwards compatible: createdAt → timestamp)
+        const timestamp = data.timestamp || 
+          (data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now());
+        
+        // Extract role (backwards compatible: use sender if role missing)
+        const role = data.role || (data.sender === 'user' ? 'user' : 'assistant');
+        
+        // Build metadata from legacy fields or new metadata object
+        const metadata = {};
+        
+        // Migrate legacy fields to metadata
+        if (messageType === 'vision' && data.analysis) {
+          metadata.analysis = data.analysis;
+          content = data.analysis; // Keep for backwards compatibility
+        }
+        if (messageType === 'audio') {
+          if (data.transcript) {
+            metadata.transcript = data.transcript;
+            content = data.transcript; // Keep for backwards compatibility
+          }
+          if (data.audioUrl) {
+            metadata.audioUrl = data.audioUrl;
+          }
+        }
+        
+        // Merge with new metadata if present
+        if (data.metadata && typeof data.metadata === 'object') {
+          Object.assign(metadata, data.metadata);
+        }
+        
+        // Build unified message structure
+        const message = {
+          id: doc.id,
+          role: role,
+          type: messageType,
+          content: content,
+          base64: data.base64 || null,
+          attachments: data.attachments || null,
+          model: data.model || DEFAULT_MODEL,
+          messageType: data.messageType || messageType, // Always replicate type
+          metadata: Object.keys(metadata).length > 0 ? metadata : {},
+          timestamp: timestamp
+        };
+        
+        loadedMessages.push(message);
       });
 
       console.log('[Store] Loaded', loadedMessages.length, 'messages from Firestore');
@@ -610,48 +630,65 @@ export const useChatStore = create((set, get) => ({
             if (change.type === 'added' && !seenIds.has(change.doc.id)) {
               const data = change.doc.data();
               
-              // Handle different message types
+              // Handle different message types with backwards compatibility
               // NOTE: Images are NOT loaded from Firestore (cache-only mode)
-              let newMessage;
+              
               if (data.type === 'image') {
                 // Skip image messages - they are cache-only
                 console.log('[Store] Skipping image message from realtime update (cache-only mode)');
                 return;
-              } else if (data.type === 'vision') {
-                newMessage = {
-                  id: change.doc.id,
-                  type: 'vision',
-                  role: data.sender === 'user' ? 'user' : 'assistant',
-                  sender: data.sender,
-                  content: data.analysis || '',
-                  messageType: 'vision',
-                  timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-                  model: data.model || DEFAULT_MODEL
-                };
-              } else if (data.type === 'audio') {
-                newMessage = {
-                  id: change.doc.id,
-                  type: 'audio',
-                  role: data.sender === 'user' ? 'user' : 'assistant',
-                  sender: data.sender,
-                  content: data.transcript || '',
-                  audioUrl: data.audioUrl || null,
-                  messageType: 'audio',
-                  timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-                  model: data.model || DEFAULT_MODEL
-                };
-              } else {
-                // Handle text messages (legacy structure)
-                newMessage = {
-                  id: change.doc.id,
-                  role: data.role,
-                  content: data.text || '',
-                  imageUrl: data.imageUrl || null, // Legacy support
-                  messageType: 'text',
-                  timestamp: data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now(),
-                  model: data.model || DEFAULT_MODEL
-                };
               }
+              
+              // Unified schema with backwards compatibility
+              // Determine type (backwards compatible: default to 'text' if missing)
+              const messageType = data.type || 'text';
+              
+              // Extract content (backwards compatible: text → content)
+              let content = data.content || data.text || '';
+              
+              // Extract timestamp (backwards compatible: createdAt → timestamp)
+              const timestamp = data.timestamp || 
+                (data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now());
+              
+              // Extract role (backwards compatible: use sender if role missing)
+              const role = data.role || (data.sender === 'user' ? 'user' : 'assistant');
+              
+              // Build metadata from legacy fields or new metadata object
+              const metadata = {};
+              
+              // Migrate legacy fields to metadata
+              if (messageType === 'vision' && data.analysis) {
+                metadata.analysis = data.analysis;
+                content = data.analysis; // Keep for backwards compatibility
+              }
+              if (messageType === 'audio') {
+                if (data.transcript) {
+                  metadata.transcript = data.transcript;
+                  content = data.transcript; // Keep for backwards compatibility
+                }
+                if (data.audioUrl) {
+                  metadata.audioUrl = data.audioUrl;
+                }
+              }
+              
+              // Merge with new metadata if present
+              if (data.metadata && typeof data.metadata === 'object') {
+                Object.assign(metadata, data.metadata);
+              }
+              
+              // Build unified message structure
+              const newMessage = {
+                id: change.doc.id,
+                role: role,
+                type: messageType,
+                content: content,
+                base64: data.base64 || null,
+                attachments: data.attachments || null,
+                model: data.model || DEFAULT_MODEL,
+                messageType: data.messageType || messageType, // Always replicate type
+                metadata: Object.keys(metadata).length > 0 ? metadata : {},
+                timestamp: timestamp
+              };
               
               // Duplicate check
               if (!isDuplicate(currentMessages, newMessage)) {
@@ -698,7 +735,7 @@ export const useChatStore = create((set, get) => ({
    * Save message to Firestore (TEXT ONLY - images are NOT persisted)
    * Images are stored only in local cache (Zustand state)
    */
-  saveMessageWithoutImageToFirestore: async (role, text, model = DEFAULT_MODEL) => {
+  saveMessageWithoutImageToFirestore: async (role, text, model = DEFAULT_MODEL, metadata = null, type = 'text', base64 = null, attachments = null) => {
     const { activeChatId, sessionId } = get();
     const chatId = activeChatId || sessionId;
     
@@ -710,13 +747,22 @@ export const useChatStore = create((set, get) => ({
     try {
       const messagesRef = getMessagesRef(chatId);
       
-      // Build message data for text messages only
+      // Build message data with unified schema (backwards compatible)
       const messageData = {
         role: role,
+        // Keep sender for backwards compatibility but it's redundant
         sender: role === 'user' ? 'user' : 'assistant',
-        text: text || null,
-        model,
-        createdAt: serverTimestamp()
+        // New unified fields
+        type: type || 'text',
+        content: text || null, // Unified field name (was 'text')
+        messageType: type || 'text', // Always replicate type
+        model: model || null,
+        timestamp: Date.now(), // UI-friendly timestamp
+        createdAt: serverTimestamp(), // Keep for backwards compatibility
+        // Optional fields
+        ...(base64 && { base64 }),
+        ...(attachments && attachments.length > 0 && { attachments }),
+        ...(metadata && Object.keys(metadata).length > 0 && { metadata })
       };
 
       const docRef = await addDoc(messagesRef, messageData);
@@ -762,13 +808,17 @@ export const useChatStore = create((set, get) => ({
       
       console.log('[Store] Image converted to base64, length:', base64DataUrl.length, 'characters');
       
-      // Add user message with base64 immediately to UI (local cache only)
+      // Add user message with base64 immediately to UI (local cache only, unified schema)
       const userMessage = {
         id: tempMessageId,
-        type: 'image',
         role: 'user',
-        sender: 'user',
+        type: 'image',
+        content: null,
         base64: base64DataUrl,
+        attachments: null,
+        model: null,
+        messageType: 'image',
+        metadata: {},
         timestamp: Date.now()
       };
 
@@ -943,24 +993,31 @@ export const useChatStore = create((set, get) => ({
         // TEXT+IMAGE mode
         const imageDataUrl = `data:image/png;base64,${imageBase64}`;
         
-        // Add text message first
+        // Add text message first (unified schema)
         const textMessage = {
           id: tempMessageId,
           role: 'assistant',
+          type: 'text',
           content: hasText,
-          model: modelToUse,
+          base64: null,
+          attachments: null,
+          model: modelToUse || null,
           messageType: 'text',
+          metadata: {},
           timestamp: Date.now()
         };
         
-        // Add image message
+        // Add image message (unified schema)
         const imageMessage = {
           id: `${tempMessageId}-img`,
-          type: 'image',
           role: 'assistant',
-          sender: 'assistant',
-          model: modelToUse,
+          type: 'image',
+          content: null,
           base64: imageDataUrl,
+          attachments: null,
+          model: modelToUse || null,
+          messageType: 'image',
+          metadata: {},
           timestamp: Date.now() + 1
         };
         
@@ -970,7 +1027,7 @@ export const useChatStore = create((set, get) => ({
         
         // Save text to Firestore
         try {
-          await get().saveMessageWithoutImageToFirestore('assistant', hasText, modelToUse);
+          await get().saveMessageWithoutImageToFirestore('assistant', hasText, modelToUse, null, 'text', null, null);
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed for assistant text:', firestoreError);
         }
@@ -978,13 +1035,17 @@ export const useChatStore = create((set, get) => ({
         console.log('[Store] TEXT+IMAGE messages added to UI');
         return imageDataUrl;
       } else if (hasText) {
-        // TEXT only mode
+        // TEXT only mode (unified schema)
         const textMessage = {
           id: tempMessageId,
           role: 'assistant',
+          type: 'text',
           content: hasText,
-          model: modelToUse,
+          base64: null,
+          attachments: null,
+          model: modelToUse || null,
           messageType: 'text',
+          metadata: {},
           timestamp: Date.now()
         };
         
@@ -994,7 +1055,7 @@ export const useChatStore = create((set, get) => ({
         
         // Save text to Firestore
         try {
-          await get().saveMessageWithoutImageToFirestore('assistant', hasText, modelToUse);
+          await get().saveMessageWithoutImageToFirestore('assistant', hasText, modelToUse, null, 'text', null, null);
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed for assistant text:', firestoreError);
         }
@@ -1002,16 +1063,19 @@ export const useChatStore = create((set, get) => ({
         console.log('[Store] TEXT message added to UI');
         return hasText;
       } else if (imageBase64) {
-        // IMAGE only mode
+        // IMAGE only mode (unified schema)
         const imageDataUrl = `data:image/png;base64,${imageBase64}`;
         
         const assistantMessage = {
           id: tempMessageId,
-          type: 'image',
           role: 'assistant',
-          sender: 'assistant',
-          model: modelToUse,
+          type: 'image',
+          content: null,
           base64: imageDataUrl,
+          attachments: null,
+          model: modelToUse || null,
+          messageType: 'image',
+          metadata: {},
           timestamp: Date.now()
         };
 
@@ -1171,13 +1235,18 @@ export const useChatStore = create((set, get) => ({
 
       // 3) Add user message immediately to UI (show original message, NOT preprocessed)
       // The preprocessed message is NEVER shown to the user
+      // Unified message schema
+      const messageType = config.type || 'text';
       const userMessage = {
         id: `temp-${Date.now()}`,
         role: 'user',
+        type: messageType,
         content: originalUserMessage, // Always show original message to user
-        attachments: attachments.length > 0 ? attachments : undefined, // Store attachments for regeneration
-        model: selectedModel,
-        messageType: config.type,
+        base64: null,
+        attachments: attachments.length > 0 ? attachments : null,
+        model: selectedModel || null,
+        messageType: messageType, // Always replicate type
+        metadata: {},
         timestamp: Date.now()
       };
 
@@ -1189,7 +1258,8 @@ export const useChatStore = create((set, get) => ({
       // Save ORIGINAL message, NOT preprocessed
       if (config.type !== 'image') {
         try {
-          await get().saveMessageWithoutImageToFirestore('user', originalUserMessage, selectedModel);
+          const metadata = attachments.length > 0 ? { attachments } : null;
+          await get().saveMessageWithoutImageToFirestore('user', originalUserMessage, selectedModel, metadata, messageType, null, attachments);
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed for user message, continuing with API call:', firestoreError);
         }
@@ -1256,15 +1326,20 @@ export const useChatStore = create((set, get) => ({
         const data = await response.json();
         console.log('[Store] API response received:', data);
 
-        // Add assistant message to UI
+        // Add assistant message to UI (unified schema)
         const assistantMessage = {
           id: `temp-${Date.now() + 1}`,
           role: 'assistant',
+          type: 'text',
           content: data.reply || 'No response generated',
-          model: selectedModel,
-          messageType: 'text',
-          timestamp: Date.now(),
-          preprocessedBy: pipelineUsed ? pipelineModel : null // Track if pre-processed
+          base64: null,
+          attachments: null,
+          model: selectedModel || null,
+          messageType: 'text', // Always replicate type
+          metadata: {
+            ...(pipelineUsed && pipelineModel ? { preprocessedBy: pipelineModel } : {})
+          },
+          timestamp: Date.now()
         };
 
           set(state => ({
@@ -1273,7 +1348,8 @@ export const useChatStore = create((set, get) => ({
 
           // Save assistant message to Firestore (TEXT ONLY)
           try {
-            await get().saveMessageWithoutImageToFirestore('assistant', data.reply || 'No response generated', selectedModel);
+            const metadata = pipelineUsed && pipelineModel ? { preprocessedBy: pipelineModel } : null;
+            await get().saveMessageWithoutImageToFirestore('assistant', data.reply || 'No response generated', selectedModel, metadata, 'text', null, null);
             console.log('[Store] Text message saved to Firestore successfully');
           } catch (firestoreError) {
             console.warn('[Store] Firestore save failed for assistant message:', firestoreError);
@@ -1390,9 +1466,10 @@ export const useChatStore = create((set, get) => ({
 
     // Resend the user message to get a new response
     try {
-      // Check if user message has attachments
-      const messageToSend = userMessage.attachments 
-        ? { text: userMessage.content, attachments: userMessage.attachments }
+      // Check if user message has attachments (backwards compatible: check both locations)
+      const attachments = userMessage.attachments || userMessage.metadata?.attachments;
+      const messageToSend = attachments 
+        ? { text: userMessage.content, attachments: attachments }
         : userMessage.content;
       await get().sendMessage(messageToSend);
     } catch (error) {
@@ -1428,15 +1505,16 @@ export const useChatStore = create((set, get) => ({
     // Save updated user message to Firestore
     try {
       const { selectedModel } = get();
-      await get().saveMessageWithoutImageToFirestore('user', newText, selectedModel);
+      await get().saveMessageWithoutImageToFirestore('user', newText, selectedModel, null, 'text', null, null);
     } catch (error) {
       console.warn('[Store] Failed to save edited message to Firestore:', error);
     }
 
     // Regenerate response with new text
-    // Preserve attachments if they exist
-    const messageToSend = message.attachments 
-      ? { text: newText, attachments: message.attachments }
+    // Preserve attachments if they exist (backwards compatible: check both locations)
+    const attachments = message.attachments || message.metadata?.attachments;
+    const messageToSend = attachments 
+      ? { text: newText, attachments: attachments }
       : newText;
     try {
       await get().sendMessage(messageToSend);
