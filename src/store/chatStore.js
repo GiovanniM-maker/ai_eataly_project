@@ -763,6 +763,74 @@ export const useChatStore = create((set, get) => ({
   },
 
   /**
+   * Process user attachments before saving: upload to Storage and convert to imageUrl format
+   * Returns cleaned attachments array with imageUrl only (no base64)
+   */
+  processUserAttachmentsBeforeSaving: async (attachments) => {
+    if (!attachments || attachments.length === 0) {
+      return [];
+    }
+
+    const userId = getUserId();
+    const { activeChatId, sessionId } = get();
+    const chatId = activeChatId || sessionId;
+
+    if (!userId || !chatId) {
+      console.warn('[Store] Cannot process attachments: missing userId or chatId');
+      return [];
+    }
+
+    const cleanedAttachments = [];
+
+    for (let i = 0; i < attachments.length; i++) {
+      const att = attachments[i];
+      
+      // Skip if already has imageUrl (already processed)
+      if (att.imageUrl && !att.base64) {
+        cleanedAttachments.push({
+          type: att.type,
+          mimeType: att.mimeType,
+          imageUrl: att.imageUrl,
+          width: att.width,
+          height: att.height
+        });
+        continue;
+      }
+
+      // If has base64, upload to Storage
+      if (att.base64) {
+        try {
+          // Convert pure base64 to data URL format for saveImageToStorage
+          const dataUrl = att.base64.startsWith('data:') 
+            ? att.base64 
+            : `data:${att.mimeType || 'image/jpeg'};base64,${att.base64}`;
+          
+          const messageId = `user-attachment-${Date.now()}-${i}`;
+          const downloadURL = await get().saveImageToStorage(dataUrl, userId, chatId, messageId);
+          
+          if (downloadURL) {
+            cleanedAttachments.push({
+              type: att.type || 'image',
+              mimeType: att.mimeType || 'image/jpeg',
+              imageUrl: downloadURL,
+              width: att.width || null,
+              height: att.height || null
+            });
+            console.log('[Store] User attachment uploaded to Storage:', downloadURL);
+          } else {
+            console.warn('[Store] Failed to upload user attachment to Storage, skipping');
+          }
+        } catch (error) {
+          console.warn('[Store] Error processing user attachment:', error);
+          // Skip this attachment on error
+        }
+      }
+    }
+
+    return cleanedAttachments;
+  },
+
+  /**
    * Save message to Firestore (TEXT ONLY - images are NOT persisted)
    * Images are stored only in local cache (Zustand state)
    */
@@ -796,9 +864,28 @@ export const useChatStore = create((set, get) => ({
         // If only base64 is present (legacy), save it for backwards compatibility
         ...(imageUrl && { imageUrl }),
         ...(base64 && !imageUrl && { base64 }), // Only save base64 if imageUrl is not present
-        ...(attachments && attachments.length > 0 && { attachments }),
-        ...(metadata && Object.keys(metadata).length > 0 && { metadata })
       };
+
+      // Handle attachments: only save imageUrl format (no base64, no nested metadata)
+      if (attachments && attachments.length > 0) {
+        messageData.attachments = attachments.map(att => ({
+          type: att.type || 'image',
+          mimeType: att.mimeType || 'image/jpeg',
+          imageUrl: att.imageUrl,
+          width: att.width || null,
+          height: att.height || null
+        }));
+      }
+
+      // Handle metadata: exclude attachments to avoid duplication
+      if (metadata && Object.keys(metadata).length > 0) {
+        // Remove attachments from metadata if present
+        const cleanMetadata = { ...metadata };
+        delete cleanMetadata.attachments;
+        if (Object.keys(cleanMetadata).length > 0) {
+          messageData.metadata = cleanMetadata;
+        }
+      }
 
       const docRef = await addDoc(messagesRef, messageData);
       console.log('[Store] Text message saved to Firestore successfully');
@@ -1544,11 +1631,15 @@ export const useChatStore = create((set, get) => ({
         messages: [...state.messages, userMessage]
       }));
 
-      // 4) Save user message to Firestore (TEXT ONLY - images are not persisted)
-      // Save ORIGINAL message, NOT preprocessed
+      // 4) Save user message to Firestore
+      // Upload user attachments to Storage first, then save only imageUrl
       try {
-        const metadata = attachments.length > 0 ? { attachments } : null;
-        await get().saveMessageWithoutImageToFirestore('user', originalUserMessage, selectedModel, metadata, messageType, null, attachments);
+        let cleanedAttachments = [];
+        if (attachments && attachments.length > 0) {
+          cleanedAttachments = await get().processUserAttachmentsBeforeSaving(attachments);
+        }
+        // Pass null for metadata to avoid nested attachments
+        await get().saveMessageWithoutImageToFirestore('user', originalUserMessage, selectedModel, null, messageType, null, cleanedAttachments, null);
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for user message, continuing with API call:', firestoreError);
       }
