@@ -1028,10 +1028,13 @@ export const useChatStore = create((set, get) => ({
     const modelToUse = model || selectedModel;
     const config = resolveModelConfig(modelToUse);
     const tempMessageId = `temp-${Date.now()}`;
+    console.log('[ImageFlow] User attachments (input):', attachments);
+    const finalAttachments = [...attachments];
     
     // Auto-reuse last assistant image if flag is enabled and no user attachments provided
-    const reuseLastAssistantImage = get().reuseLastAssistantImage || false;
-    if (reuseLastAssistantImage && attachments.length === 0) {
+    // Force reuse to always be ON (ignore toggle/store)
+    const reuseLastAssistantImage = true;
+    if (reuseLastAssistantImage) {
       const { messages } = get();
       
       // Find last assistant image message (scan from end backward)
@@ -1045,6 +1048,7 @@ export const useChatStore = create((set, get) => ({
       }
       
       if (lastAssistantImage) {
+        console.log('[ImageFlow] Previous assistant image found for reuse');
         try {
           let base64Data = null;
           let mimeType = 'image/png'; // Default mime type
@@ -1087,7 +1091,7 @@ export const useChatStore = create((set, get) => ({
           
           if (base64Data) {
             // Add to attachments in the same format as user uploads
-            attachments.push({
+            finalAttachments.push({
               type: 'image',
               mimeType: mimeType,
               base64: base64Data
@@ -1110,7 +1114,8 @@ export const useChatStore = create((set, get) => ({
       console.log('[Store] Provider:', config.provider);
       console.log('[Store] Endpoint:', apiUrl);
       console.log('[Store] Prompt:', prompt);
-      console.log('[Store] Attachments:', attachments.length);
+      console.log('[Store] Attachments:', finalAttachments.length);
+      console.log('[ImageFlow] Final attachments sent:', finalAttachments);
 
       // Build modelSettings from current config
       const modelSettings = get().buildModelSettings(modelToUse);
@@ -1124,7 +1129,7 @@ export const useChatStore = create((set, get) => ({
         body: JSON.stringify({
           model: config.googleModel,
           prompt: prompt,
-          ...(attachments.length > 0 && { attachments }),
+          ...(finalAttachments.length > 0 && { attachments: finalAttachments }),
           ...(modelSettings && { modelSettings }),
           debugMode: debugMode
         }),
