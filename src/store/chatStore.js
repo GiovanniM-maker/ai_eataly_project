@@ -95,6 +95,7 @@ export const useChatStore = create((set, get) => ({
   loading: false,
   selectedModel: DEFAULT_MODEL,
   userId: getUserId(), // User ID for Firestore paths
+  reuseLastAssistantImage: false,
   
   /**
    * Set selected model
@@ -102,6 +103,13 @@ export const useChatStore = create((set, get) => ({
   setSelectedModel: (model) => {
     set({ selectedModel: model });
     console.log('[Store] Model changed to:', model);
+  },
+
+  /**
+   * Toggle reuse last assistant image flag
+   */
+  toggleReuseLastAssistantImage: () => {
+    set({ reuseLastAssistantImage: !get().reuseLastAssistantImage });
   },
 
   /**
@@ -1020,6 +1028,78 @@ export const useChatStore = create((set, get) => ({
     const modelToUse = model || selectedModel;
     const config = resolveModelConfig(modelToUse);
     const tempMessageId = `temp-${Date.now()}`;
+    
+    // Auto-reuse last assistant image if flag is enabled and no user attachments provided
+    const reuseLastAssistantImage = get().reuseLastAssistantImage || false;
+    if (reuseLastAssistantImage && attachments.length === 0) {
+      const { messages } = get();
+      
+      // Find last assistant image message (scan from end backward)
+      let lastAssistantImage = null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.role === 'assistant' && msg.type === 'image' && (msg.imageUrl || msg.base64)) {
+          lastAssistantImage = msg;
+          break;
+        }
+      }
+      
+      if (lastAssistantImage) {
+        try {
+          let base64Data = null;
+          let mimeType = 'image/png'; // Default mime type
+          
+          if (lastAssistantImage.imageUrl) {
+            // Fetch imageUrl and convert to base64
+            const imageResponse = await fetch(lastAssistantImage.imageUrl);
+            const blob = await imageResponse.blob();
+            mimeType = blob.type || 'image/png';
+            
+            base64Data = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onloadend = () => {
+                const dataUrl = reader.result;
+                // Remove data:image/...;base64, prefix
+                const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl;
+                resolve(base64);
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+          } else if (lastAssistantImage.base64) {
+            // Extract base64 from data URL (remove prefix if present)
+            const base64String = lastAssistantImage.base64;
+            if (base64String.startsWith('data:')) {
+              // Extract mime type and base64
+              const matches = base64String.match(/^data:([^;]+);base64,(.+)$/);
+              if (matches && matches.length === 3) {
+                mimeType = matches[1] || 'image/png';
+                base64Data = matches[2];
+              } else {
+                // Fallback: try to extract just base64 part
+                base64Data = base64String.includes(',') ? base64String.split(',')[1] : base64String;
+              }
+            } else {
+              // Already pure base64
+              base64Data = base64String;
+            }
+          }
+          
+          if (base64Data) {
+            // Add to attachments in the same format as user uploads
+            attachments.push({
+              type: 'image',
+              mimeType: mimeType,
+              base64: base64Data
+            });
+            console.log('[Store] Auto-attached last assistant image as input');
+          }
+        } catch (error) {
+          console.warn('[Store] Failed to auto-attach last assistant image:', error);
+          // Continue without auto-attachment on error
+        }
+      }
+    }
     
     try {
       const apiUrl = import.meta.env.VITE_API_URL || config.endpoint;

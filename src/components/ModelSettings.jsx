@@ -6,6 +6,7 @@ import {
   modelSupportsOption, 
   getOptionValues 
 } from '../lib/modelCapabilities';
+import { isImageModel } from '../lib/modelRouter';
 import { HelpCircle } from 'lucide-react';
 
 /**
@@ -36,7 +37,7 @@ const Tooltip = ({ text, children }) => {
  * Model Settings Panel - Dynamic configuration UI based on model capabilities
  */
 const ModelSettings = ({ isOpen, onClose }) => {
-  const { modelConfigs, loadModelConfig, saveModelConfig, loadAllModelConfigs, debugMode, setDebugMode, userId } = useChatStore();
+  const { modelConfigs, loadModelConfig, saveModelConfig, loadAllModelConfigs, debugMode, setDebugMode, userId, reuseLastAssistantImage, toggleReuseLastAssistantImage } = useChatStore();
   const [selectedModel, setSelectedModel] = useState(ALL_MODELS[0]);
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -444,6 +445,25 @@ const ModelSettings = ({ isOpen, onClose }) => {
                   </select>
                 </div>
               ))}
+
+              {/* Reuse Last Assistant Image Toggle - Only for image models */}
+              {isImageModel(selectedModel) && (
+                <div className="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    id="reuseLastAssistantImage"
+                    checked={reuseLastAssistantImage || false}
+                    onChange={() => toggleReuseLastAssistantImage()}
+                    className="w-4 h-4 text-blue-600 bg-gray-800 border-gray-700 rounded focus:ring-blue-500"
+                  />
+                  <label htmlFor="reuseLastAssistantImage" className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                    Riutilizza automaticamente l'ultima immagine generata
+                    <Tooltip text="Quando abilitato, l'ultima immagine generata dall'assistente viene automaticamente riutilizzata come input per la generazione successiva">
+                      <HelpCircle className="w-4 h-4 text-gray-400" />
+                    </Tooltip>
+                  </label>
+                </div>
+              )}
 
               {/* DEBUG MODE Toggle */}
               <div className="border-t border-gray-800 pt-4 mt-4">
