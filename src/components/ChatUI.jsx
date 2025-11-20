@@ -538,25 +538,41 @@ const ChatUI = () => {
                     
                     {/* Image rendering: supports root imageUrl/base64 OR attachments array */}
                     {(() => {
-                      // Helper function to extract all image URLs from a message
+                      // Helper function to extract all image URLs from a message (with deduplication)
                       const extractAllImageUrls = (msg) => {
                         const imageUrls = [];
+                        const seenUrls = new Set(); // Track normalized URLs to prevent duplicates
+                        
+                        // Normalize URL for comparison (trim and remove extra spaces)
+                        const normalizeUrl = (url) => {
+                          if (!url || typeof url !== 'string') return null;
+                          return url.trim();
+                        };
+                        
+                        // Add URL only if not already seen (maintains priority order)
+                        const addUrlIfUnique = (url, source) => {
+                          const normalized = normalizeUrl(url);
+                          if (normalized && normalized !== '' && !seenUrls.has(normalized)) {
+                            seenUrls.add(normalized);
+                            imageUrls.push({ url: url, source: source });
+                          }
+                        };
                         
                         // Priority 1: Root-level imageUrl (assistant messages)
                         if (msg.imageUrl && typeof msg.imageUrl === 'string' && msg.imageUrl.trim() !== '') {
-                          imageUrls.push({ url: msg.imageUrl, source: 'root-imageUrl' });
+                          addUrlIfUnique(msg.imageUrl, 'root-imageUrl');
                         }
                         
                         // Priority 2: Root-level base64 (legacy or temp messages)
                         if (msg.base64 && typeof msg.base64 === 'string' && msg.base64.trim() !== '') {
-                          imageUrls.push({ url: msg.base64, source: 'root-base64' });
+                          addUrlIfUnique(msg.base64, 'root-base64');
                         }
                         
                         // Priority 3: Attachments array (user messages)
                         if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
                           msg.attachments.forEach((att, index) => {
                             if (att.imageUrl && typeof att.imageUrl === 'string' && att.imageUrl.trim() !== '') {
-                              imageUrls.push({ url: att.imageUrl, source: `attachments[${index}].imageUrl` });
+                              addUrlIfUnique(att.imageUrl, `attachments[${index}].imageUrl`);
                             }
                           });
                         }
