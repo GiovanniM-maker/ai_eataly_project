@@ -536,17 +536,53 @@ const ChatUI = () => {
                       )
                     )}
                     
-                    {/* Image messages: type === "image" with imageUrl or base64 */}
-                    {message.type === 'image' && (message.imageUrl || message.base64) && (
-                      <img
-                        src={message.imageUrl || message.base64}
-                        alt={message.role === 'user' ? 'Uploaded image' : 'Generated image'}
-                        className="max-w-full rounded-lg mt-2"
-                        style={{ maxWidth: '100%', height: 'auto', borderRadius: '12px' }}
-                        onLoad={() => console.log('[UI] Image rendered successfully from', message.imageUrl ? 'Storage URL' : 'base64')}
-                        onError={(e) => console.error('[UI] Error rendering image:', e)}
-                      />
-                    )}
+                    {/* Image rendering: supports root imageUrl/base64 OR attachments array */}
+                    {(() => {
+                      // Helper function to extract all image URLs from a message
+                      const extractAllImageUrls = (msg) => {
+                        const imageUrls = [];
+                        
+                        // Priority 1: Root-level imageUrl (assistant messages)
+                        if (msg.imageUrl && typeof msg.imageUrl === 'string' && msg.imageUrl.trim() !== '') {
+                          imageUrls.push({ url: msg.imageUrl, source: 'root-imageUrl' });
+                        }
+                        
+                        // Priority 2: Root-level base64 (legacy or temp messages)
+                        if (msg.base64 && typeof msg.base64 === 'string' && msg.base64.trim() !== '') {
+                          imageUrls.push({ url: msg.base64, source: 'root-base64' });
+                        }
+                        
+                        // Priority 3: Attachments array (user messages)
+                        if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+                          msg.attachments.forEach((att, index) => {
+                            if (att.imageUrl && typeof att.imageUrl === 'string' && att.imageUrl.trim() !== '') {
+                              imageUrls.push({ url: att.imageUrl, source: `attachments[${index}].imageUrl` });
+                            }
+                          });
+                        }
+                        
+                        return imageUrls;
+                      };
+                      
+                      const imageUrls = extractAllImageUrls(message);
+                      
+                      // Render images if any found (for any message type)
+                      if (imageUrls.length > 0) {
+                        return imageUrls.map((img, index) => (
+                          <img
+                            key={`img-${message.id}-${index}`}
+                            src={img.url}
+                            alt={message.role === 'user' ? 'Uploaded image' : 'Generated image'}
+                            className="max-w-full rounded-lg mt-2"
+                            style={{ maxWidth: '100%', height: 'auto', borderRadius: '12px' }}
+                            onLoad={() => console.log('[UI] Image rendered successfully from', img.source)}
+                            onError={(e) => console.error('[UI] Error rendering image:', e)}
+                          />
+                        ));
+                      }
+                      
+                      return null;
+                    })()}
                   </div>
                 </div>
               </div>

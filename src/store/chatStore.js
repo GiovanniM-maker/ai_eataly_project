@@ -586,13 +586,22 @@ export const useChatStore = create((set, get) => ({
         
         // Build unified message structure
         // For images: prefer imageUrl over base64 (new standard), fallback to base64 for legacy
+        // Promote first attachment's imageUrl to root if root imageUrl is missing
+        let rootImageUrl = data.imageUrl || null;
+        if (!rootImageUrl && data.attachments && Array.isArray(data.attachments) && data.attachments.length > 0) {
+          const firstAttachment = data.attachments[0];
+          if (firstAttachment && firstAttachment.imageUrl) {
+            rootImageUrl = firstAttachment.imageUrl;
+          }
+        }
+        
         const message = {
           id: doc.id,
           role: role,
           type: messageType,
           content: content,
-          base64: data.imageUrl || data.base64 || null, // imageUrl can be used as src in UI
-          imageUrl: data.imageUrl || null, // Keep explicit imageUrl field for clarity
+          base64: rootImageUrl || data.base64 || null, // imageUrl can be used as src in UI
+          imageUrl: rootImageUrl || null, // Keep explicit imageUrl field for clarity (promoted from attachments if needed)
           attachments: data.attachments || null,
           model: data.model || DEFAULT_MODEL,
           messageType: data.messageType || messageType, // Always replicate type
@@ -644,10 +653,10 @@ export const useChatStore = create((set, get) => ({
         (snapshot) => {
           const { messages: currentMessages } = get();
           const newMessages = [];
-          const seenIds = new Set(currentMessages.map(m => m.id));
+          const tempMessagesToRemove = new Set();
           
           snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added' && !seenIds.has(change.doc.id)) {
+            if (change.type === 'added') {
               const data = change.doc.data();
               
               // Handle different message types with backwards compatibility
@@ -707,13 +716,22 @@ export const useChatStore = create((set, get) => ({
               
               // Build unified message structure
               // For images: prefer imageUrl over base64 (new standard), fallback to base64 for legacy
+              // Promote first attachment's imageUrl to root if root imageUrl is missing
+              let rootImageUrl = data.imageUrl || null;
+              if (!rootImageUrl && data.attachments && Array.isArray(data.attachments) && data.attachments.length > 0) {
+                const firstAttachment = data.attachments[0];
+                if (firstAttachment && firstAttachment.imageUrl) {
+                  rootImageUrl = firstAttachment.imageUrl;
+                }
+              }
+              
               const newMessage = {
                 id: change.doc.id,
                 role: role,
                 type: messageType,
                 content: content,
-                base64: data.imageUrl || data.base64 || null, // imageUrl can be used as src in UI
-                imageUrl: data.imageUrl || null, // Keep explicit imageUrl field for clarity
+                base64: rootImageUrl || data.base64 || null, // imageUrl can be used as src in UI
+                imageUrl: rootImageUrl || null, // Keep explicit imageUrl field for clarity (promoted from attachments if needed)
                 attachments: data.attachments || null,
                 model: data.model || DEFAULT_MODEL,
                 messageType: data.messageType || messageType, // Always replicate type
@@ -721,18 +739,43 @@ export const useChatStore = create((set, get) => ({
                 timestamp: timestamp
               };
               
-              // Duplicate check
-              if (!isDuplicate(currentMessages, newMessage)) {
-                newMessages.push(newMessage);
-                seenIds.add(change.doc.id);
+              // Find matching temp message to remove
+              // Match by: role, type, content (string equality, null == null), timestamp within ±1500ms
+              const matchingTempIndex = currentMessages.findIndex(msg => {
+                if (!msg.tempMessage) return false;
+                if (msg.role !== newMessage.role) return false;
+                if (msg.type !== newMessage.type) return false;
+                
+                // Content match: both null or both same string
+                const msgContent = msg.content || '';
+                const newContent = newMessage.content || '';
+                if (msgContent !== newContent) return false;
+                
+                // Timestamp within ±1500ms
+                const timeDiff = Math.abs((msg.timestamp || 0) - (newMessage.timestamp || 0));
+                if (timeDiff > 1500) return false;
+                
+                return true;
+              });
+              
+              if (matchingTempIndex !== -1) {
+                // Mark temp message for removal
+                tempMessagesToRemove.add(currentMessages[matchingTempIndex].id);
+                console.log('[Store] Found matching temp message, will remove:', currentMessages[matchingTempIndex].id);
               }
+              
+              // Add Firestore message
+              newMessages.push(newMessage);
             }
           });
 
-          if (newMessages.length > 0) {
-            console.log('[Store] Realtime update:', newMessages.length, 'new messages');
+          if (newMessages.length > 0 || tempMessagesToRemove.size > 0) {
+            console.log('[Store] Realtime update:', newMessages.length, 'new messages, removing', tempMessagesToRemove.size, 'temp messages');
             set(state => ({
-              messages: [...state.messages, ...newMessages].sort((a, b) => a.timestamp - b.timestamp)
+              messages: [
+                ...state.messages.filter(msg => !tempMessagesToRemove.has(msg.id)),
+                ...newMessages
+              ].sort((a, b) => a.timestamp - b.timestamp)
             }));
           }
         },
@@ -1272,7 +1315,8 @@ export const useChatStore = create((set, get) => ({
           model: modelToUse || null,
           messageType: 'text',
           metadata: {},
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          tempMessage: true // Mark as temp message for deduplication
         };
         
         // Add image message (unified schema)
@@ -1286,7 +1330,8 @@ export const useChatStore = create((set, get) => ({
           model: modelToUse || null,
           messageType: 'image',
           metadata: {},
-          timestamp: Date.now() + 1
+          timestamp: Date.now() + 1,
+          tempMessage: true // Mark as temp message for deduplication
         };
         
         set(state => ({
@@ -1369,7 +1414,8 @@ export const useChatStore = create((set, get) => ({
           model: modelToUse || null,
           messageType: 'text',
           metadata: {},
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          tempMessage: true // Mark as temp message for deduplication
         };
         
         set(state => ({
@@ -1400,7 +1446,8 @@ export const useChatStore = create((set, get) => ({
           model: modelToUse || null,
           messageType: 'image',
           metadata: {},
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          tempMessage: true // Mark as temp message for deduplication
         };
 
         set(state => ({
@@ -1613,7 +1660,11 @@ export const useChatStore = create((set, get) => ({
       // 3) Add user message immediately to UI (show original message, NOT preprocessed)
       // The preprocessed message is NEVER shown to the user
       // Unified message schema
-      const messageType = config.type || 'text';
+      // User messages always have type: 'text' unless they have NO text AND have attachments
+      const hasText = originalUserMessage && originalUserMessage.trim().length > 0;
+      const hasAttachments = attachments && attachments.length > 0;
+      const messageType = (!hasText && hasAttachments) ? 'image' : 'text';
+      
       const userMessage = {
         id: `temp-${Date.now()}`,
         role: 'user',
@@ -1624,7 +1675,8 @@ export const useChatStore = create((set, get) => ({
         model: selectedModel || null,
         messageType: messageType, // Always replicate type
         metadata: {},
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        tempMessage: true // Mark as temp message for deduplication
       };
 
       set(state => ({
@@ -1635,11 +1687,28 @@ export const useChatStore = create((set, get) => ({
       // Upload user attachments to Storage first, then save only imageUrl
       try {
         let cleanedAttachments = [];
+        let firstImageUrl = null;
+        
         if (attachments && attachments.length > 0) {
           cleanedAttachments = await get().processUserAttachmentsBeforeSaving(attachments);
+          
+          // Promote first attachment's imageUrl to root level for UI consistency
+          if (cleanedAttachments.length > 0 && cleanedAttachments[0].imageUrl) {
+            firstImageUrl = cleanedAttachments[0].imageUrl;
+            // Update userMessage in UI to include imageUrl at root
+            set(state => ({
+              messages: state.messages.map(msg => 
+                msg.id === userMessage.id 
+                  ? { ...msg, imageUrl: firstImageUrl }
+                  : msg
+              )
+            }));
+          }
         }
+        
         // Pass null for metadata to avoid nested attachments
-        await get().saveMessageWithoutImageToFirestore('user', originalUserMessage, selectedModel, null, messageType, null, cleanedAttachments, null);
+        // Pass firstImageUrl to saveMessageWithoutImageToFirestore for root-level storage
+        await get().saveMessageWithoutImageToFirestore('user', originalUserMessage, selectedModel, null, messageType, null, cleanedAttachments, firstImageUrl);
       } catch (firestoreError) {
         console.warn('[Store] Firestore save failed for user message, continuing with API call:', firestoreError);
       }
@@ -1740,7 +1809,8 @@ export const useChatStore = create((set, get) => ({
           metadata: {
             ...(pipelineUsed && pipelineModel ? { preprocessedBy: pipelineModel } : {})
           },
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          tempMessage: true // Mark as temp message for deduplication
         };
 
           set(state => ({
