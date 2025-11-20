@@ -1398,13 +1398,11 @@ export const useChatStore = create((set, get) => ({
 
       // 4) Save user message to Firestore (TEXT ONLY - images are not persisted)
       // Save ORIGINAL message, NOT preprocessed
-      if (config.type !== 'image') {
-        try {
-          const metadata = attachments.length > 0 ? { attachments } : null;
-          await get().saveMessageWithoutImageToFirestore('user', originalUserMessage, selectedModel, metadata, messageType, null, attachments);
-        } catch (firestoreError) {
-          console.warn('[Store] Firestore save failed for user message, continuing with API call:', firestoreError);
-        }
+      try {
+        const metadata = attachments.length > 0 ? { attachments } : null;
+        await get().saveMessageWithoutImageToFirestore('user', originalUserMessage, selectedModel, metadata, messageType, null, attachments);
+      } catch (firestoreError) {
+        console.warn('[Store] Firestore save failed for user message, continuing with API call:', firestoreError);
       }
 
       // Route to appropriate handler based on model provider
