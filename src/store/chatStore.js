@@ -828,9 +828,9 @@ export const useChatStore = create((set, get) => ({
       // Determine file extension from mime type
       const extension = mimeType.split('/')[1] || 'png';
       
-      // Generate storage path: users/{userId}/chats/{chatId}/{timestamp}.{ext}
+      // Generate storage path: chats/{chatId}/{timestamp}.{ext}
       const timestamp = messageId ? messageId.replace('temp-', '') : Date.now();
-      const storagePath = `users/${userId}/chats/${chatId}/${timestamp}.${extension}`;
+      const storagePath = `chats/${chatId}/${timestamp}.${extension}`;
       
       console.log('[Store] Uploading image to Storage:', storagePath, 'mimeType:', mimeType, 'size:', bytes.length, 'bytes');
       
