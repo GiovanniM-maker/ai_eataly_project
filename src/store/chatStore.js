@@ -524,15 +524,19 @@ export const useChatStore = create((set, get) => ({
         // Load image messages if they have valid imageUrl OR base64 data
         // This maintains backwards compatibility: legacy image messages with base64 continue to work
         if (data.type === 'image') {
-          const hasImageUrl = data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.trim() !== '';
-          const hasBase64 = data.base64 && typeof data.base64 === 'string' && data.base64.trim() !== '';
-          
-          if (!hasImageUrl && !hasBase64) {
-            // Skip image messages without either imageUrl or base64 (corrupted/legacy)
-            console.log('[Store] Skipping image message without imageUrl or base64 data');
-            return;
+          // Allow user messages even if they have no imageUrl or base64
+          if (data.role === 'user') {
+            // Do nothing – keep the message
+          } else {
+            // Assistant image messages must have imageUrl or base64
+            const hasImageUrl = data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.trim() !== '';
+            const hasBase64 = data.base64 && typeof data.base64 === 'string' && data.base64.trim() !== '';
+            
+            if (!hasImageUrl && !hasBase64) {
+              console.log('[Store] Skipping assistant image message without imageUrl or base64');
+              return;
+            }
           }
-          // Continue to load image message with imageUrl or base64
         }
         
         // Unified schema with backwards compatibility
@@ -641,15 +645,19 @@ export const useChatStore = create((set, get) => ({
               // Handle different message types with backwards compatibility
               // Load image messages if they have valid imageUrl OR base64 data (same logic as loadMessages)
               if (data.type === 'image') {
-                const hasImageUrl = data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.trim() !== '';
-                const hasBase64 = data.base64 && typeof data.base64 === 'string' && data.base64.trim() !== '';
-                
-                if (!hasImageUrl && !hasBase64) {
-                  // Skip image messages without either imageUrl or base64 (corrupted/legacy)
-                  console.log('[Store] Skipping image message without imageUrl or base64 data in realtime');
-                  return;
+                // Allow user messages even if they have no imageUrl or base64
+                if (data.role === 'user') {
+                  // Do nothing – keep the message
+                } else {
+                  // Assistant image messages must have imageUrl or base64
+                  const hasImageUrl = data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.trim() !== '';
+                  const hasBase64 = data.base64 && typeof data.base64 === 'string' && data.base64.trim() !== '';
+                  
+                  if (!hasImageUrl && !hasBase64) {
+                    console.log('[Store] Skipping assistant image message without imageUrl or base64');
+                    return;
+                  }
                 }
-                // Continue to load image message with imageUrl or base64
               }
               
               // Unified schema with backwards compatibility
