@@ -1036,26 +1036,53 @@ export const useChatStore = create((set, get) => ({
     const reuseLastAssistantImage = true;
     if (reuseLastAssistantImage) {
       const { messages } = get();
+      console.log('[ImageFlow] Scanning messages for last assistant image...');
       
       // Find last assistant image message (scan from end backward)
-      let lastAssistantImage = null;
+      let preferredBase64Candidate = null;
+      let fallbackUrlCandidate = null;
       for (let i = messages.length - 1; i >= 0; i--) {
         const msg = messages[i];
         if (msg.role === 'assistant' && msg.type === 'image' && (msg.imageUrl || msg.base64)) {
-          lastAssistantImage = msg;
-          break;
+          const hasDataUrlBase64 =
+            typeof msg.base64 === 'string' &&
+            msg.base64.trim().startsWith('data:image');
+          
+          if (hasDataUrlBase64) {
+            preferredBase64Candidate = msg;
+            break;
+          }
+          
+          if (!fallbackUrlCandidate && msg.imageUrl) {
+            fallbackUrlCandidate = msg;
+          }
         }
       }
       
-      if (lastAssistantImage) {
+      const candidate = preferredBase64Candidate || fallbackUrlCandidate;
+      
+      if (candidate) {
         console.log('[ImageFlow] Previous assistant image found for reuse');
         try {
           let base64Data = null;
           let mimeType = 'image/png'; // Default mime type
           
-          if (lastAssistantImage.imageUrl) {
+          if (preferredBase64Candidate) {
+            console.log('[ImageFlow] Using base64 candidate for reuse');
+            const dataUrl = preferredBase64Candidate.base64 || '';
+            const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+            mimeType = matches?.[1] || 'image/png';
+            base64Data = matches?.[2];
+            if (!base64Data && dataUrl.includes(',')) {
+              base64Data = dataUrl.split(',')[1];
+            }
+            if (!base64Data) {
+              base64Data = dataUrl;
+            }
+          } else if (fallbackUrlCandidate && fallbackUrlCandidate.imageUrl) {
+            console.log('[ImageFlow] Falling back to imageUrl candidate for reuse');
             // Fetch imageUrl and convert to base64
-            const imageResponse = await fetch(lastAssistantImage.imageUrl);
+            const imageResponse = await fetch(fallbackUrlCandidate.imageUrl);
             const blob = await imageResponse.blob();
             mimeType = blob.type || 'image/png';
             
@@ -1070,23 +1097,6 @@ export const useChatStore = create((set, get) => ({
               reader.onerror = reject;
               reader.readAsDataURL(blob);
             });
-          } else if (lastAssistantImage.base64) {
-            // Extract base64 from data URL (remove prefix if present)
-            const base64String = lastAssistantImage.base64;
-            if (base64String.startsWith('data:')) {
-              // Extract mime type and base64
-              const matches = base64String.match(/^data:([^;]+);base64,(.+)$/);
-              if (matches && matches.length === 3) {
-                mimeType = matches[1] || 'image/png';
-                base64Data = matches[2];
-              } else {
-                // Fallback: try to extract just base64 part
-                base64Data = base64String.includes(',') ? base64String.split(',')[1] : base64String;
-              }
-            } else {
-              // Already pure base64
-              base64Data = base64String;
-            }
           }
           
           if (base64Data) {
