@@ -1132,17 +1132,36 @@ export const useChatStore = create((set, get) => ({
           if (!userId || !chatId) {
             console.warn('[Store] Nanobanana image NOT uploaded: missing userId or chatId', { userId: !!userId, chatId: !!chatId });
             // Continue to show image in UI (base64), but don't save to Firestore
-          } else {
-            const downloadURL = await get().saveImageToStorage(imageDataUrl, userId, chatId, `${tempMessageId}-img`);
-            
-            if (downloadURL) {
-              // Save image message with imageUrl (NOT base64) to Firestore
-              await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', null, null, downloadURL);
-              console.log('[Store] Image saved to Firestore with Storage URL');
-            } else {
-              console.warn('[Store] Nanobanana image upload FAILED, no downloadURL. Skipping Firestore save.');
-            }
+            return;
           }
+
+          const downloadURL = await get().saveImageToStorage(imageDataUrl, userId, chatId, `${tempMessageId}-img`);
+
+          // Decide cosa salvare in Firestore:
+          // - se abbiamo downloadURL → salviamo solo imageUrl
+          // - se NON l'abbiamo → salviamo base64 come fallback
+          let imageUrlForDb = null;
+          let base64ForDb = null;
+
+          if (downloadURL) {
+            imageUrlForDb = downloadURL;
+          } else {
+            console.warn(
+              '[Store] Nanobanana image upload FAILED, no downloadURL. Falling back to base64 in Firestore.'
+            );
+            base64ForDb = imageDataUrl;
+          }
+
+          await get().saveMessageWithoutImageToFirestore(
+            'assistant',                 // role
+            null,                        // text
+            modelToUse,                  // model
+            { provider: 'nanobanana' },  // metadata
+            'image',                     // type
+            base64ForDb,                 // base64 (solo se niente URL)
+            null,                        // attachments
+            imageUrlForDb                // imageUrl (se presente)
+          );
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed for assistant image:', firestoreError);
         }
@@ -1219,17 +1238,36 @@ export const useChatStore = create((set, get) => ({
           if (!userId || !chatId) {
             console.warn('[Store] Nanobanana image NOT uploaded: missing userId or chatId', { userId: !!userId, chatId: !!chatId });
             // Continue to show image in UI (base64), but don't save to Firestore
-          } else {
-            const downloadURL = await get().saveImageToStorage(imageDataUrl, userId, chatId, tempMessageId);
-            
-            if (downloadURL) {
-              // Save image message with imageUrl (NOT base64) to Firestore
-              await get().saveMessageWithoutImageToFirestore('assistant', null, modelToUse, { provider: 'nanobanana' }, 'image', null, null, downloadURL);
-              console.log('[Store] Image saved to Firestore with Storage URL');
-            } else {
-              console.warn('[Store] Nanobanana image upload FAILED, no downloadURL. Skipping Firestore save.');
-            }
+            return;
           }
+
+          const downloadURL = await get().saveImageToStorage(imageDataUrl, userId, chatId, tempMessageId);
+
+          // Decide cosa salvare in Firestore:
+          // - se abbiamo downloadURL → salviamo solo imageUrl
+          // - se NON l'abbiamo → salviamo base64 come fallback
+          let imageUrlForDb = null;
+          let base64ForDb = null;
+
+          if (downloadURL) {
+            imageUrlForDb = downloadURL;
+          } else {
+            console.warn(
+              '[Store] Nanobanana image upload FAILED, no downloadURL. Falling back to base64 in Firestore.'
+            );
+            base64ForDb = imageDataUrl;
+          }
+
+          await get().saveMessageWithoutImageToFirestore(
+            'assistant',                 // role
+            null,                        // text
+            modelToUse,                  // model
+            { provider: 'nanobanana' },  // metadata
+            'image',                     // type
+            base64ForDb,                 // base64 (solo se niente URL)
+            null,                        // attachments
+            imageUrlForDb                // imageUrl (se presente)
+          );
         } catch (firestoreError) {
           console.warn('[Store] Firestore save failed for assistant image:', firestoreError);
         }
