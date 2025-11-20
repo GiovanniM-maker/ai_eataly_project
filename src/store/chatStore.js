@@ -1030,6 +1030,7 @@ export const useChatStore = create((set, get) => ({
     const tempMessageId = `temp-${Date.now()}`;
     console.log('[ImageFlow] User attachments (input):', attachments);
     const finalAttachments = [...attachments];
+    console.log('[FixB] User attachments (main):', attachments);
     
     // Auto-reuse last assistant image if flag is enabled and no user attachments provided
     // Force reuse to always be ON (ignore toggle/store)
@@ -1107,6 +1108,7 @@ export const useChatStore = create((set, get) => ({
               base64: base64Data
             });
             console.log('[Store] Auto-attached last assistant image as input');
+            console.log('[FixB] Appended previous assistant image (context)');
           }
         } catch (error) {
           console.warn('[Store] Failed to auto-attach last assistant image:', error);
@@ -1114,6 +1116,7 @@ export const useChatStore = create((set, get) => ({
         }
       }
     }
+    console.log('[FixB] Final ordered attachments:', finalAttachments);
     
     try {
       const apiUrl = import.meta.env.VITE_API_URL || config.endpoint;
@@ -1126,6 +1129,7 @@ export const useChatStore = create((set, get) => ({
       console.log('[Store] Prompt:', prompt);
       console.log('[Store] Attachments:', finalAttachments.length);
       console.log('[ImageFlow] Final attachments sent:', finalAttachments);
+      console.log('[FixB] Sending attachments count:', finalAttachments.length);
 
       // Build modelSettings from current config
       const modelSettings = get().buildModelSettings(modelToUse);
@@ -1140,6 +1144,9 @@ export const useChatStore = create((set, get) => ({
           model: config.googleModel,
           prompt: prompt,
           ...(finalAttachments.length > 0 && { attachments: finalAttachments }),
+          ...(finalAttachments.length > 1 && {
+            systemInstruction: 'Use the FIRST image as the main input. Use the SECOND image only as contextual reference.'
+          }),
           ...(modelSettings && { modelSettings }),
           debugMode: debugMode
         }),
