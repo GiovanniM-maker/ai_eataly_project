@@ -68,6 +68,16 @@ const ChatUI = () => {
     if (activeChatId) {
       loadMessages();
     }
+    
+    // Cleanup: unsubscribe listener when component unmounts or chat changes
+    return () => {
+      const { unsubscribe, activeListenerChatId } = useChatStore.getState();
+      if (unsubscribe && activeListenerChatId === activeChatId) {
+        console.log('[ChatUI] Cleaning up listener on unmount/chat change');
+        unsubscribe();
+        useChatStore.setState({ unsubscribe: null, activeListenerChatId: null });
+      }
+    };
   }, [activeChatId, loadMessages]);
 
   // Auto-scroll to bottom when new messages arrive

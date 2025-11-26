@@ -86,12 +86,17 @@ const isDuplicate = (messages, newMessage) => {
  */
 export const useChatStore = create((set, get) => ({
   messages: [],
+  // Normalized message structure (Step 1)
+  messagesById: new Map(),      // Map<messageId, Message>
+  messagesOrder: [],            // Array<messageId> in chronological order
   sessionId: getSessionId(), // Legacy support
   activeChatId: null, // Current active chat ID
   currentChatId: null, // Alias for activeChatId (exposed for compatibility)
   chats: [], // List of all chats
   firestoreError: null,
   unsubscribe: null,
+  activeListenerChatId: null,  // chatId currently listened to
+  listenerVersion: 0,          // increments on each listener setup to prevent stale listeners
   loading: false,
   selectedModel: DEFAULT_MODEL,
   userId: getUserId(), // User ID for Firestore paths
@@ -303,15 +308,14 @@ export const useChatStore = create((set, get) => ({
         chats: state.chats.filter(chat => chat.id !== chatId),
         activeChatId: newActiveChatId,
         currentChatId: newActiveChatId, // Update alias
-        sessionId: newActiveChatId || state.sessionId,
-        messages: newActiveChatId === chatId ? [] : state.messages
+        sessionId: newActiveChatId || state.sessionId
       }));
 
       // Load messages for new active chat if changed
       if (newActiveChatId && newActiveChatId !== activeChatId) {
         await get().loadMessages();
       } else if (!newActiveChatId) {
-        set({ messages: [] });
+        get().replaceMessages([]);
       }
 
       console.log('[Store] Chat deleted successfully');
@@ -420,12 +424,23 @@ export const useChatStore = create((set, get) => ({
     try {
       console.log('[Store] Setting active chat:', chatId);
       
+      // Clean up listener for previous chat
+      const { unsubscribe, activeListenerChatId } = get();
+      if (unsubscribe && activeListenerChatId && activeListenerChatId !== chatId) {
+        console.log('[Store] Cleaning up listener for previous chat:', activeListenerChatId);
+        unsubscribe();
+      }
+      
       set({ 
         activeChatId: chatId,
         currentChatId: chatId, // Update alias
         sessionId: chatId, // Update sessionId for backward compatibility
-        messages: [] // Clear messages, will be loaded
+        unsubscribe: null,
+        activeListenerChatId: null
       });
+      
+      // Clear messages using normalized helper
+      get().replaceMessages([]);
 
       // Update localStorage
       localStorage.setItem('chat_session_id', chatId);
@@ -613,7 +628,8 @@ export const useChatStore = create((set, get) => ({
       });
 
       console.log('[Store] Loaded', loadedMessages.length, 'messages from Firestore');
-      set({ messages: loadedMessages, loading: false });
+      get().replaceMessages(loadedMessages);
+      set({ loading: false });
       
       // Setup realtime listener
       get().setupRealtimeListener();
@@ -628,9 +644,10 @@ export const useChatStore = create((set, get) => ({
 
   /**
    * Setup realtime listener for messages
+   * Refactored to use normalized message structure (Step 2)
    */
   setupRealtimeListener: () => {
-    const { activeChatId, sessionId, unsubscribe } = get();
+    const { activeChatId, sessionId, unsubscribe, activeListenerChatId, listenerVersion } = get();
     const chatId = activeChatId || sessionId;
     
     if (!chatId) {
@@ -638,146 +655,171 @@ export const useChatStore = create((set, get) => ({
       return;
     }
     
+    // Prevent multiple listeners for the same chat
+    if (activeListenerChatId === chatId && unsubscribe) {
+      console.log('[Store] Listener already active for chat:', chatId);
+      return;
+    }
+    
     // Clean up existing listener
     if (unsubscribe) {
+      console.log('[Store] Cleaning up existing listener for chat:', activeListenerChatId);
       unsubscribe();
     }
 
     try {
-      console.log('[Store] Setting up realtime listener for chat:', chatId);
+      // Increment version token to prevent race conditions
+      const currentVersion = listenerVersion + 1;
+      set({ 
+        listenerVersion: currentVersion,
+        unsubscribe: null,
+        activeListenerChatId: null
+      });
+
+      console.log('[Store] Setting up realtime listener for chat:', chatId, 'version:', currentVersion);
       const messagesRef = getMessagesRef(chatId);
       const q = query(messagesRef, orderBy('createdAt', 'asc'));
+      
+      // Capture version in closure for listener callback
+      const version = currentVersion;
       
       const unsubscribeListener = onSnapshot(
         q,
         (snapshot) => {
-          const { messages: currentMessages } = get();
-          const newMessages = [];
-          const tempMessagesToRemove = new Set();
+          // Verify this listener is still for the active chat and version matches
+          const { activeChatId: currentActiveChatId, sessionId: currentSessionId, listenerVersion: currentVersion } = get();
+          const currentChatId = currentActiveChatId || currentSessionId;
+          
+          if (currentChatId !== chatId) {
+            console.log('[Store] Listener fired for inactive chat, ignoring:', chatId);
+            return;
+          }
+          
+          if (currentVersion !== version) {
+            console.log('[Store] Listener version mismatch, ignoring stale listener. Current:', currentVersion, 'Listener:', version);
+            return;
+          }
+          
+          // Get current messages from normalized structure (falls back to legacy array)
+          const currentMessages = get().getMessages();
           
           snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added') {
-              const data = change.doc.data();
-              
-              // Handle different message types with backwards compatibility
-              // Load image messages if they have valid imageUrl OR base64 data (same logic as loadMessages)
-              if (data.type === 'image') {
-                // Allow user messages even if they have no imageUrl or base64
-                if (data.role === 'user') {
-                  // Do nothing – keep the message
-                } else {
-                  // Assistant image messages must have imageUrl or base64
-                  const hasImageUrl = data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.trim() !== '';
-                  const hasBase64 = data.base64 && typeof data.base64 === 'string' && data.base64.trim() !== '';
-                  
-                  if (!hasImageUrl && !hasBase64) {
-                    console.log('[Store] Skipping assistant image message without imageUrl or base64');
-                    return;
-                  }
+            const data = change.doc.data();
+            const docId = change.doc.id;
+            
+            // Handle different message types with backwards compatibility
+            // Load image messages if they have valid imageUrl OR base64 data (same logic as loadMessages)
+            if (data.type === 'image') {
+              // Allow user messages even if they have no imageUrl or base64
+              if (data.role === 'user') {
+                // Do nothing – keep the message
+              } else {
+                // Assistant image messages must have imageUrl or base64
+                const hasImageUrl = data.imageUrl && typeof data.imageUrl === 'string' && data.imageUrl.trim() !== '';
+                const hasBase64 = data.base64 && typeof data.base64 === 'string' && data.base64.trim() !== '';
+                
+                if (!hasImageUrl && !hasBase64) {
+                  console.log('[Store] Skipping assistant image message without imageUrl or base64');
+                  return;
                 }
               }
-              
-              // Unified schema with backwards compatibility
-              // Determine type (backwards compatible: default to 'text' if missing)
-              const messageType = data.type || 'text';
-              
-              // Extract content (backwards compatible: text → content)
-              let content = data.content || data.text || '';
-              
-              // Extract timestamp (backwards compatible: createdAt → timestamp)
-              const timestamp = data.timestamp || 
-                (data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now());
-              
-              // Extract role (backwards compatible: use sender if role missing)
-              const role = data.role || (data.sender === 'user' ? 'user' : 'assistant');
-              
-              // Build metadata from legacy fields or new metadata object
-              const metadata = {};
-              
-              // Migrate legacy fields to metadata
-              if (messageType === 'vision' && data.analysis) {
-                metadata.analysis = data.analysis;
-                content = data.analysis; // Keep for backwards compatibility
+            }
+            
+            // Unified schema with backwards compatibility
+            // Determine type (backwards compatible: default to 'text' if missing)
+            const messageType = data.type || 'text';
+            
+            // Extract content (backwards compatible: text → content)
+            let content = data.content || data.text || '';
+            
+            // Extract timestamp (backwards compatible: createdAt → timestamp)
+            const timestamp = data.timestamp || 
+              (data.createdAt?.toMillis?.() || data.createdAt?.seconds * 1000 || Date.now());
+            
+            // Extract role (backwards compatible: use sender if role missing)
+            const role = data.role || (data.sender === 'user' ? 'user' : 'assistant');
+            
+            // Build metadata from legacy fields or new metadata object
+            const metadata = {};
+            
+            // Migrate legacy fields to metadata
+            if (messageType === 'vision' && data.analysis) {
+              metadata.analysis = data.analysis;
+              content = data.analysis; // Keep for backwards compatibility
+            }
+            if (messageType === 'audio') {
+              if (data.transcript) {
+                metadata.transcript = data.transcript;
+                content = data.transcript; // Keep for backwards compatibility
               }
-              if (messageType === 'audio') {
-                if (data.transcript) {
-                  metadata.transcript = data.transcript;
-                  content = data.transcript; // Keep for backwards compatibility
-                }
-                if (data.audioUrl) {
-                  metadata.audioUrl = data.audioUrl;
-                }
+              if (data.audioUrl) {
+                metadata.audioUrl = data.audioUrl;
               }
-              
-              // Merge with new metadata if present
-              if (data.metadata && typeof data.metadata === 'object') {
-                Object.assign(metadata, data.metadata);
+            }
+            
+            // Merge with new metadata if present
+            if (data.metadata && typeof data.metadata === 'object') {
+              Object.assign(metadata, data.metadata);
+            }
+            
+            // Build unified message structure
+            // For images: prefer imageUrl over base64 (new standard), fallback to base64 for legacy
+            // Promote first attachment's imageUrl to root if root imageUrl is missing
+            let rootImageUrl = data.imageUrl || null;
+            if (!rootImageUrl && data.attachments && Array.isArray(data.attachments) && data.attachments.length > 0) {
+              const firstAttachment = data.attachments[0];
+              if (firstAttachment && firstAttachment.imageUrl) {
+                rootImageUrl = firstAttachment.imageUrl;
               }
-              
-              // Build unified message structure
-              // For images: prefer imageUrl over base64 (new standard), fallback to base64 for legacy
-              // Promote first attachment's imageUrl to root if root imageUrl is missing
-              let rootImageUrl = data.imageUrl || null;
-              if (!rootImageUrl && data.attachments && Array.isArray(data.attachments) && data.attachments.length > 0) {
-                const firstAttachment = data.attachments[0];
-                if (firstAttachment && firstAttachment.imageUrl) {
-                  rootImageUrl = firstAttachment.imageUrl;
-                }
-              }
-              
-              const newMessage = {
-                id: change.doc.id,
-                role: role,
-                type: messageType,
-                content: content,
-                base64: rootImageUrl || data.base64 || null, // imageUrl can be used as src in UI
-                imageUrl: rootImageUrl || null, // Keep explicit imageUrl field for clarity (promoted from attachments if needed)
-                attachments: data.attachments || null,
-                model: data.model || DEFAULT_MODEL,
-                messageType: data.messageType || messageType, // Always replicate type
-                metadata: Object.keys(metadata).length > 0 ? metadata : {},
-                timestamp: timestamp
-              };
+            }
+            
+            const parsedMessage = {
+              id: docId,
+              role: role,
+              type: messageType,
+              content: content,
+              base64: rootImageUrl || data.base64 || null, // imageUrl can be used as src in UI
+              imageUrl: rootImageUrl || null, // Keep explicit imageUrl field for clarity (promoted from attachments if needed)
+              attachments: data.attachments || null,
+              model: data.model || DEFAULT_MODEL,
+              messageType: data.messageType || messageType, // Always replicate type
+              metadata: Object.keys(metadata).length > 0 ? metadata : {},
+              timestamp: timestamp
+            };
+            
+            // Handle change types using normalized helpers
+            if (change.type === 'added' || change.type === 'modified') {
+              // Use normalized helper to add/update message
+              get().addOrUpdateMessage(docId, parsedMessage);
               
               // Find matching temp message to remove
               // Match by: role, type, content (string equality, null == null), timestamp within ±1500ms
-              const matchingTempIndex = currentMessages.findIndex(msg => {
+              const matchingTempMessage = currentMessages.find(msg => {
                 if (!msg.tempMessage) return false;
-                if (msg.role !== newMessage.role) return false;
-                if (msg.type !== newMessage.type) return false;
+                if (msg.role !== parsedMessage.role) return false;
+                if (msg.type !== parsedMessage.type) return false;
                 
                 // Content match: both null or both same string
                 const msgContent = msg.content || '';
-                const newContent = newMessage.content || '';
+                const newContent = parsedMessage.content || '';
                 if (msgContent !== newContent) return false;
                 
                 // Timestamp within ±1500ms
-                const timeDiff = Math.abs((msg.timestamp || 0) - (newMessage.timestamp || 0));
+                const timeDiff = Math.abs((msg.timestamp || 0) - (parsedMessage.timestamp || 0));
                 if (timeDiff > 1500) return false;
                 
                 return true;
               });
               
-              if (matchingTempIndex !== -1) {
-                // Mark temp message for removal
-                tempMessagesToRemove.add(currentMessages[matchingTempIndex].id);
-                console.log('[Store] Found matching temp message, will remove:', currentMessages[matchingTempIndex].id);
+              if (matchingTempMessage) {
+                console.log('[Store] Found matching temp message, removing:', matchingTempMessage.id);
+                get().removeMessage(matchingTempMessage.id);
               }
-              
-              // Add Firestore message
-              newMessages.push(newMessage);
+            } else if (change.type === 'removed') {
+              // Use normalized helper to remove message
+              get().removeMessage(docId);
             }
           });
-
-          if (newMessages.length > 0 || tempMessagesToRemove.size > 0) {
-            console.log('[Store] Realtime update:', newMessages.length, 'new messages, removing', tempMessagesToRemove.size, 'temp messages');
-            set(state => ({
-              messages: [
-                ...state.messages.filter(msg => !tempMessagesToRemove.has(msg.id)),
-                ...newMessages
-              ].sort((a, b) => a.timestamp - b.timestamp)
-            }));
-          }
         },
         (error) => {
           console.error('[Store] Realtime listener error:', error);
@@ -785,7 +827,10 @@ export const useChatStore = create((set, get) => ({
         }
       );
 
-      set({ unsubscribe: unsubscribeListener });
+      set({ 
+        unsubscribe: unsubscribeListener,
+        activeListenerChatId: chatId
+      });
     } catch (error) {
       console.error('[Store] Error setting up realtime listener:', error);
       set({ firestoreError: error.message });
@@ -1039,9 +1084,8 @@ export const useChatStore = create((set, get) => ({
         timestamp: Date.now()
       };
 
-      set(state => ({
-        messages: [...state.messages, userMessage]
-      }));
+      // Add message using normalized helper
+      get().addOrUpdateMessage(tempMessageId, userMessage);
 
       console.log('[Store] Image message added to UI, rendering from base64');
       console.log('[Store] Image saved in local cache (NOT persisted).');
@@ -1049,10 +1093,8 @@ export const useChatStore = create((set, get) => ({
       return true;
     } catch (error) {
       console.error('[Store] Error sending image message:', error);
-      // Remove message from UI on error
-      set(state => ({
-        messages: state.messages.filter(msg => msg.id !== tempMessageId)
-      }));
+      // Remove message from UI on error using normalized helper
+      get().removeMessage(tempMessageId);
       throw error;
     }
   },
@@ -1132,9 +1174,8 @@ export const useChatStore = create((set, get) => ({
         timestamp: Date.now()
       };
 
-      set(state => ({
-        messages: [...state.messages, assistantMessage]
-      }));
+      // Add message using normalized helper
+      get().addOrUpdateMessage(tempMessageId, assistantMessage);
 
       console.log('[Store] Image message added to UI, rendering from base64');
       console.log('[Store] Image saved in local cache (NOT persisted).');
@@ -1142,10 +1183,8 @@ export const useChatStore = create((set, get) => ({
       return imageDataUrl;
     } catch (error) {
       console.error('[Store] Error generating image:', error);
-      // Remove message from UI on error
-      set(state => ({
-        messages: state.messages.filter(msg => msg.id !== tempMessageId)
-      }));
+      // Remove message from UI on error using normalized helper
+      get().removeMessage(tempMessageId);
       throw error;
     }
   },
@@ -1166,7 +1205,7 @@ export const useChatStore = create((set, get) => ({
     // Force reuse to always be ON (ignore toggle/store)
     const reuseLastAssistantImage = true;
     if (reuseLastAssistantImage) {
-      const { messages } = get();
+      const messages = get().getMessages();
       console.log('[ImageFlow] Scanning messages for last assistant image...');
       
       // Find last assistant image message (scan from end backward)
@@ -1334,9 +1373,9 @@ export const useChatStore = create((set, get) => ({
           tempMessage: true // Mark as temp message for deduplication
         };
         
-        set(state => ({
-          messages: [...state.messages, textMessage, imageMessage]
-        }));
+        // Add messages using normalized helpers
+        get().addOrUpdateMessage(tempMessageId, textMessage);
+        get().addOrUpdateMessage(`${tempMessageId}-img`, imageMessage);
         
         // Save text to Firestore
         try {
@@ -1418,9 +1457,8 @@ export const useChatStore = create((set, get) => ({
           tempMessage: true // Mark as temp message for deduplication
         };
         
-        set(state => ({
-          messages: [...state.messages, textMessage]
-        }));
+        // Add message using normalized helper
+        get().addOrUpdateMessage(tempMessageId, textMessage);
         
         // Save text to Firestore
         try {
@@ -1450,9 +1488,8 @@ export const useChatStore = create((set, get) => ({
           tempMessage: true // Mark as temp message for deduplication
         };
 
-        set(state => ({
-          messages: [...state.messages, assistantMessage]
-        }));
+        // Add message using normalized helper
+        get().addOrUpdateMessage(tempMessageId, assistantMessage);
 
         // Upload image to Firebase Storage and save URL to Firestore
         try {
@@ -1517,10 +1554,8 @@ export const useChatStore = create((set, get) => ({
       }
     } catch (error) {
       console.error('[Store] Error generating Nanobanana image:', error);
-      // Remove message from UI on error
-      set(state => ({
-        messages: state.messages.filter(msg => msg.id !== tempMessageId)
-      }));
+      // Remove message from UI on error using normalized helper
+      get().removeMessage(tempMessageId);
       throw error;
     }
   },
@@ -1679,9 +1714,8 @@ export const useChatStore = create((set, get) => ({
         tempMessage: true // Mark as temp message for deduplication
       };
 
-      set(state => ({
-        messages: [...state.messages, userMessage]
-      }));
+      // Add user message using normalized helper
+      get().addOrUpdateMessage(userMessage.id, userMessage);
 
       // 4) Save user message to Firestore
       // Upload user attachments to Storage first, then save only imageUrl
@@ -1695,14 +1729,8 @@ export const useChatStore = create((set, get) => ({
           // Promote first attachment's imageUrl to root level for UI consistency
           if (cleanedAttachments.length > 0 && cleanedAttachments[0].imageUrl) {
             firstImageUrl = cleanedAttachments[0].imageUrl;
-            // Update userMessage in UI to include imageUrl at root
-            set(state => ({
-              messages: state.messages.map(msg => 
-                msg.id === userMessage.id 
-                  ? { ...msg, imageUrl: firstImageUrl }
-                  : msg
-              )
-            }));
+            // Update userMessage in UI to include imageUrl at root using normalized helper
+            get().addOrUpdateMessage(userMessage.id, { imageUrl: firstImageUrl });
           }
         }
         
@@ -1745,7 +1773,7 @@ export const useChatStore = create((set, get) => ({
         get().setIsGenerating(true);
         
         // Build conversation history from current messages in store (SAFE MODE - Option C: text only)
-        const { messages } = get();
+        const messages = get().getMessages();
         const conversationHistory = messages
           .filter(msg => {
             // Include only text messages with content
@@ -1813,9 +1841,8 @@ export const useChatStore = create((set, get) => ({
           tempMessage: true // Mark as temp message for deduplication
         };
 
-          set(state => ({
-            messages: [...state.messages, assistantMessage]
-          }));
+          // Add assistant message using normalized helper
+          get().addOrUpdateMessage(assistantMessage.id, assistantMessage);
 
           // Save assistant message to Firestore (TEXT ONLY)
           try {
@@ -1835,10 +1862,12 @@ export const useChatStore = create((set, get) => ({
           
           if (error.name === 'AbortError') {
             console.log('[Store] Generation aborted by user');
-            // Remove the last assistant message if it was being generated
-            set(state => ({
-              messages: state.messages.filter(msg => msg.role !== 'assistant' || msg.id !== `temp-${Date.now() + 1}`)
-            }));
+            // Remove the last assistant message if it was being generated using normalized helper
+            const { messages } = get();
+            const lastAssistantMessage = messages.find(msg => msg.role === 'assistant' && msg.tempMessage);
+            if (lastAssistantMessage) {
+              get().removeMessage(lastAssistantMessage.id);
+            }
             return null;
           }
           throw error;
@@ -1864,13 +1893,15 @@ export const useChatStore = create((set, get) => ({
     const newChatId = await get().createNewChat();
     
       set({ 
-        messages: [], 
         sessionId: newChatId,
         activeChatId: newChatId,
         currentChatId: newChatId, // Update alias
         unsubscribe: null,
         firestoreError: null
       });
+      
+      // Clear messages using normalized helper
+      get().replaceMessages([]);
     
     console.log('[Store] New chat created:', newChatId);
   },
@@ -1883,20 +1914,17 @@ export const useChatStore = create((set, get) => ({
 
   /**
    * Update a message in the messages array
+   * Uses normalized helper to maintain consistency
    */
   updateMessage: (messageId, updates) => {
-    set(state => ({
-      messages: state.messages.map(msg => 
-        msg.id === messageId ? { ...msg, ...updates } : msg
-      )
-    }));
+    get().addOrUpdateMessage(messageId, updates);
   },
 
   /**
    * Get previous user message before a given message
    */
   getPreviousUserMessage: (messageId) => {
-    const { messages } = get();
+    const messages = get().getMessages();
     const messageIndex = messages.findIndex(msg => msg.id === messageId);
     if (messageIndex === -1) return null;
     
@@ -1913,7 +1941,8 @@ export const useChatStore = create((set, get) => ({
    * Regenerate response for a message
    */
   regenerateMessage: async (messageId) => {
-    const { messages, selectedModel } = get();
+    const messages = get().getMessages();
+    const { selectedModel } = get();
     const message = messages.find(msg => msg.id === messageId);
     
     if (!message || message.role !== 'assistant') {
@@ -1930,10 +1959,8 @@ export const useChatStore = create((set, get) => ({
 
     console.log('[Store] Regenerating response for message:', messageId);
     
-    // Remove the old assistant message
-    set(state => ({
-      messages: state.messages.filter(msg => msg.id !== messageId)
-    }));
+    // Remove the old assistant message using normalized helper
+    get().removeMessage(messageId);
 
     // Resend the user message to get a new response
     try {
@@ -1953,7 +1980,7 @@ export const useChatStore = create((set, get) => ({
    * Edit user message and regenerate response
    */
   editUserMessage: async (messageId, newText) => {
-    const { messages } = get();
+    const messages = get().getMessages();
     const message = messages.find(msg => msg.id === messageId);
     
     if (!message || message.role !== 'user') {
@@ -1968,10 +1995,12 @@ export const useChatStore = create((set, get) => ({
     
     // Find and remove all assistant messages after this user message
     const messageIndex = messages.findIndex(msg => msg.id === messageId);
-    const messagesToKeep = messages.slice(0, messageIndex + 1);
     const messagesToRemove = messages.slice(messageIndex + 1);
     
-    set({ messages: messagesToKeep });
+    // Remove all messages after the edited message using normalized helper
+    messagesToRemove.forEach(msg => {
+      get().removeMessage(msg.id);
+    });
     
     // Save updated user message to Firestore
     try {
@@ -2344,6 +2373,144 @@ export const useChatStore = create((set, get) => ({
       set({ firestoreError: error.message });
       throw error;
     }
+  },
+
+  /**
+   * Normalized Message Structure Helpers (Step 1)
+   * These functions maintain both normalized structure and legacy messages array
+   */
+
+  /**
+   * Get ordered messages from normalized structure
+   * Falls back to legacy messages array if normalized structure is not initialized
+   */
+  getMessages: () => {
+    const state = get();
+    const { messagesById, messagesOrder } = state;
+
+    if (!messagesById || !messagesOrder || messagesById.size === 0) {
+      return state.messages || [];
+    }
+
+    return messagesOrder
+      .map(id => messagesById.get(id))
+      .filter(Boolean);
+  },
+
+  /**
+   * Replace all messages with a new array
+   * Updates both normalized structure and legacy messages array
+   */
+  replaceMessages: (messagesArray) => {
+    set((state) => {
+      const messagesById = new Map();
+      const messagesOrder = [];
+
+      for (const message of messagesArray || []) {
+        if (!message || !message.id) continue;
+        messagesById.set(message.id, message);
+        messagesOrder.push(message.id);
+      }
+
+      // Sort by timestamp (used throughout the codebase)
+      messagesOrder.sort((a, b) => {
+        const msgA = messagesById.get(a);
+        const msgB = messagesById.get(b);
+        const tsA = msgA?.timestamp ?? 0;
+        const tsB = msgB?.timestamp ?? 0;
+        return tsA - tsB;
+      });
+
+      const orderedMessages = messagesOrder
+        .map(id => messagesById.get(id))
+        .filter(Boolean);
+
+      return {
+        ...state,
+        messagesById,
+        messagesOrder,
+        messages: orderedMessages, // backward compatibility
+      };
+    });
+  },
+
+  /**
+   * Add or update a message by ID
+   * If ID exists, merges with existing message
+   * If ID doesn't exist, adds it and appends to order
+   * Maintains both normalized structure and legacy messages array
+   */
+  addOrUpdateMessage: (id, message) => {
+    if (!id || !message) return;
+
+    set((state) => {
+      const messagesById = new Map(state.messagesById || []);
+      const messagesOrder = [...(state.messagesOrder || [])];
+
+      const existing = messagesById.get(id);
+      if (existing) {
+        // Update existing message
+        messagesById.set(id, { ...existing, ...message });
+      } else {
+        // Add new message
+        messagesById.set(id, message);
+        if (!messagesOrder.includes(id)) {
+          messagesOrder.push(id);
+        }
+      }
+
+      // Sort order by timestamp (used throughout the codebase)
+      messagesOrder.sort((a, b) => {
+        const msgA = messagesById.get(a);
+        const msgB = messagesById.get(b);
+        const tsA = msgA?.timestamp ?? 0;
+        const tsB = msgB?.timestamp ?? 0;
+        return tsA - tsB;
+      });
+
+      const orderedMessages = messagesOrder
+        .map(mid => messagesById.get(mid))
+        .filter(Boolean);
+
+      return {
+        ...state,
+        messagesById,
+        messagesOrder,
+        messages: orderedMessages, // keep legacy array in sync
+      };
+    });
+  },
+
+  /**
+   * Remove a message by ID
+   * Removes from both normalized structure and legacy messages array
+   */
+  removeMessage: (id) => {
+    if (!id) return;
+
+    set((state) => {
+      const messagesById = new Map(state.messagesById || []);
+      const messagesOrder = [...(state.messagesOrder || [])];
+
+      if (!messagesById.has(id)) {
+        return state; // nothing to do
+      }
+
+      messagesById.delete(id);
+
+      const newOrder = messagesOrder.filter(mid => mid !== id);
+
+      const orderedMessages = newOrder
+        .map(mid => messagesById.get(mid))
+        .filter(Boolean);
+
+      return {
+        ...state,
+        messagesById,
+        messagesOrder: newOrder,
+        messages: orderedMessages, // keep legacy array in sync
+      };
+    });
   }
 }));
 
